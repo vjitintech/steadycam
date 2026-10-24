@@ -68,6 +68,14 @@ h1 b { color: var(--accent) } h1 sup { font: 500 12px var(--mono); color: var(--
 .recbtn[aria-pressed="true"] i { width: 24px; height: 24px; border-radius: 4px }
 .recinfo { display: grid; gap: 4px; min-width: 0; flex: 1 }
 .recinfo strong { font: 600 20px var(--display); letter-spacing: .03em; text-transform: uppercase }
+.cta { background: var(--accent); color: var(--accent-ink); border-radius: 5px; padding: 12px 14px }
+.clips { display: grid; gap: 8px }
+.clips .lbl { font: 500 11px var(--mono); color: var(--muted); letter-spacing: .08em; text-transform: uppercase }
+.clips ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden }
+.clips li { background: var(--panel); padding: 10px 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap }
+.clips li .meta { flex: 1 1 180px; min-width: 0; font: 13px var(--mono); overflow-wrap: anywhere }
+.clips li .meta b { display: block; font: 600 16px var(--display); letter-spacing: .03em }
+.clips li button { padding: 8px 10px; font-size: 14px }
 .status { font: 13px var(--mono); color: var(--muted); min-height: 1.4em; overflow-wrap: anywhere }
 
 .deck { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px }
@@ -125,10 +133,15 @@ pre { margin: 0; background: var(--panel); border: 1px solid var(--line); border
     </div>
     <div class="row" style="flex:0 1 auto">
       <button class="solid" id="unlock" hidden>Unlock target</button>
-      <button class="solid" id="saveAgain" hidden>Save clip</button>
-      <button class="solid" id="share" hidden>Save to Photos</button>
+      <button class="cta" id="share" hidden>Save to Photos</button>
+      <button class="solid" id="saveAgain" hidden>Download</button>
     </div>
   </div>
+
+  <section class="clips" id="clips" hidden>
+    <div class="lbl">Your clips · kept on this phone until you delete them</div>
+    <ul id="clipList"></ul>
+  </section>
 
   <div class="meter" aria-live="off">
     <div class="big"><small>Shake removed</small><strong id="mRed">–</strong></div>
@@ -442,20 +455,65 @@ pre { margin: 0; background: var(--panel); border: 1px solid var(--line); border
     $('recStatus').textContent = out.width + '×' + out.height + ' · ' + S.fps + ' fps · ' + Math.round(r.bitrate / 1e6) + ' Mbps · ' + r.extension.toUpperCase();
     $('saveAgain').hidden = true; $('share').hidden = true; setState('Recording', 'rec'); keepAwake(true);
   }
+  // iPhone/iPad: Safari never lets a web page write to Photos or start a download without a tap,
+  // so every clip is auto-saved inside the app first (survives reloads), then one tap sends it to Photos/Files.
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const Clips = {
+    _db: null,
+    open() { return this._db || (this._db = new Promise((res, rej) => { const q = indexedDB.open('steadycam', 1); q.onupgradeneeded = () => q.result.createObjectStore('clips', { keyPath: 'id' }); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); })); },
+    async tx(mode, fn) { const db = await this.open(); return new Promise((res, rej) => { const t = db.transaction('clips', mode), st = t.objectStore('clips'); const out = fn(st); t.oncomplete = () => res(out && out.result !== undefined ? out.result : out); t.onerror = () => rej(t.error); }); },
+    put(c) { return this.tx('readwrite', st => st.put(c)); },
+    all() { return this.tx('readonly', st => st.getAll()); },
+    del(id) { return this.tx('readwrite', st => st.delete(id)); },
+  };
+  const canShareFile = (f) => { try { return !!(navigator.canShare && navigator.canShare({ files: [f] })); } catch (e) { return false; } };
+  async function shareClip(c) {
+    const f = new File([c.blob], c.name, { type: c.blob.type || 'video/mp4' });
+    try { await navigator.share({ files: [f] }); return 'Done. If you chose Save Video, it is in your Photos.'; }
+    catch (e) { return e.name === 'AbortError' ? 'Not saved yet. Tap Save to Photos when you are ready.' : 'Sharing is not available here. Use Download.'; }
+  }
+  async function renderClips() {
+    let list = [];
+    try { list = (await Clips.all()).sort((a, b) => b.id - a.id); } catch (e) { return; }
+    $('clips').hidden = !list.length; const ul = $('clipList'); ul.textContent = '';
+    for (const c of list) {
+      const li = document.createElement('li'), meta = document.createElement('div'); meta.className = 'meta';
+      const b = document.createElement('b'); b.textContent = new Date(c.id).toLocaleString();
+      meta.append(b, document.createTextNode(c.res + ' · ' + fmtTime(c.ms) + ' · ' + (c.blob.size / 1e6).toFixed(1) + ' MB'));
+      li.append(meta);
+      const file = new File([c.blob], c.name, { type: c.blob.type });
+      if (canShareFile(file)) { const s = document.createElement('button'); s.className = 'cta'; s.textContent = isIOS ? 'Save to Photos' : 'Share / Save'; s.onclick = async () => { $('recStatus').textContent = await shareClip(c); }; li.append(s); }
+      const d = document.createElement('button'); d.className = 'solid'; d.textContent = 'Download'; d.onclick = async () => { $('recStatus').textContent = await saveBlob(c.blob, c.name); }; li.append(d);
+      const x = document.createElement('button'); x.className = 'solid'; x.textContent = 'Delete';
+      x.onclick = async () => { if (x.dataset.sure) { await Clips.del(c.id).catch(() => {}); renderClips(); } else { x.dataset.sure = 1; x.textContent = 'Tap again to delete'; } };
+      li.append(x); ul.append(li);
+    }
+  }
   async function stopRec() {
     if (!S.rec) return;
     const r = S.rec; S.rec = null;
     $('rec').setAttribute('aria-pressed', 'false'); $('rec').setAttribute('aria-label', 'Start recording'); $('recLabel').hidden = true;
     setState('Live', 'live');
+    const ms = Date.now() - r.startedAt;
     const blob = await r.stop();
     if (!blob.size) { $('recTitle').textContent = 'Ready to record'; $('recStatus').textContent = 'Nothing was recorded.'; return; }
-    const name = 'steadycam-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.' + r.extension;
-    S.lastClip = { blob, name };
+    const id = Date.now(), name = 'steadycam-' + new Date(id).toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.' + r.extension;
+    const clip = { id, name, blob, ms, res: out.width + '×' + out.height };
+    S.lastClip = clip;
+    let kept = false;
+    try { await Clips.put(clip); kept = true; } catch (e) {}
+    renderClips();
     $('recTitle').textContent = 'Clip ready · ' + (blob.size / 1e6).toFixed(1) + ' MB';
     $('saveAgain').hidden = false;
-    const file = new File([blob], name, { type: blob.type });
-    $('share').hidden = !(navigator.canShare && navigator.canShare({ files: [file] }));
-    $('recStatus').textContent = $('autosave').checked ? await saveBlob(blob, name) : 'Tap Save clip to keep it.';
+    $('share').hidden = !canShareFile(new File([blob], name, { type: blob.type }));
+    $('share').textContent = isIOS ? 'Save to Photos' : 'Share / Save';
+    if (!$('autosave').checked) { $('recStatus').textContent = kept ? 'Kept in Your clips below.' : 'Tap Download to keep it.'; return; }
+    if (isIOS || window.claude) {
+      $('recStatus').textContent = (kept ? 'Auto-saved in SteadyCam. ' : '') + 'Tap Save to Photos to put it in your gallery, or Download to pick a folder in Files.';
+      if (window.claude) $('recStatus').textContent = await saveBlob(blob, name);
+    } else {
+      $('recStatus').textContent = await saveBlob(blob, name) + (kept ? ' · also kept in Your clips' : '');
+    }
   }
 
   // ---------- controls ----------
@@ -476,11 +534,8 @@ pre { margin: 0; background: var(--panel); border: 1px solid var(--line); border
   for (const b of $('fpsSeg').querySelectorAll('button')) b.onclick = () => { if (S.rec) return; S.fps = +b.dataset.f; pressed('fpsSeg', b); if (S.stream) useCamera(); };
   $('rec').onclick = () => S.rec ? stopRec() : startRec();
   $('saveAgain').onclick = async () => { if (S.lastClip) $('recStatus').textContent = await saveBlob(S.lastClip.blob, S.lastClip.name); };
-  $('share').onclick = async () => {
-    if (!S.lastClip) return;
-    try { await navigator.share({ files: [new File([S.lastClip.blob], S.lastClip.name, { type: S.lastClip.blob.type })] }); $('recStatus').textContent = 'Shared. Choose Save Video to put it in Photos.'; }
-    catch (e) { if (e.name !== 'AbortError') $('recStatus').textContent = 'Sharing is not available here. Use Save clip.'; }
-  };
+  $('share').onclick = async () => { if (S.lastClip) $('recStatus').textContent = await shareClip(S.lastClip); };
+  renderClips();
   $('getApp').onclick = async () => {
     const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body>' + document.body.innerHTML + '</body></html>';
     $('recStatus').textContent = await saveBlob(new Blob([html], { type: 'text/html' }), 'steadycam.html');
