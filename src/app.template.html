@@ -1,0 +1,493 @@
+<title>SteadyCam</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: camera instrument — live viewfinder with lock-on reticle first, hardware-style control deck below, SDK notes last */
+:root {
+  --bg: #11130f; --panel: #1a1d17; --line: #2d3127; --fg: #e9e6dc; --muted: #9a9a8a;
+  --accent: #f0a63a; --accent-ink: #1a1206; --good: #7fc28a; --warn: #e06a4d; --raw: #7c8aa6;
+  --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  --bg: #f2f1ea; --panel: #fbfaf5; --line: #d9d7cb; --fg: #1d1f19; --muted: #67685d;
+  --accent: #b86e0c; --accent-ink: #fff8ec; --good: #2f7d3d; --warn: #b5402a; --raw: #55627e; color-scheme: light } }
+:root[data-theme="light"] {
+  --bg: #f2f1ea; --panel: #fbfaf5; --line: #d9d7cb; --fg: #1d1f19; --muted: #67685d;
+  --accent: #b86e0c; --accent-ink: #fff8ec; --good: #2f7d3d; --warn: #b5402a; --raw: #55627e; color-scheme: light }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font: 15px/1.5 var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 14px 40px }
+.wrap { max-width: 980px; margin: 0 auto; display: grid; gap: 14px }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap }
+h1 { font: 700 34px/1 var(--display); letter-spacing: .02em; margin: 0; text-transform: uppercase }
+h1 b { color: var(--accent) } h1 sup { font: 500 12px var(--mono); color: var(--muted); margin-left: 4px }
+.tag { font: 500 12px var(--mono); color: var(--muted); letter-spacing: .06em; text-transform: uppercase }
+.pill { font: 500 12px var(--mono); padding: 4px 10px; border-radius: 99px; border: 1px solid var(--line); display: inline-flex; gap: 6px; align-items: center }
+.pill i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted) }
+.pill.live i { background: var(--good) } .pill.rec i { background: var(--warn); animation: blink 1s infinite }
+@keyframes blink { 50% { opacity: .2 } }
+
+.stage { display: grid; justify-items: center }
+.finder { position: relative; background: #000; border-radius: 6px; overflow: hidden; width: 100%; aspect-ratio: 16/9; max-width: 100%; border: 1px solid var(--line); touch-action: none; user-select: none; -webkit-user-select: none; cursor: crosshair }
+.finder canvas#out { width: 100%; height: 100%; display: block }
+.pip { position: absolute; left: 10px; bottom: 10px; width: 26%; max-width: 200px; border: 1px solid rgba(255,255,255,.35); border-radius: 4px; overflow: hidden; background: #000; pointer-events: none }
+.pip canvas { width: 100%; display: block }
+.hud { position: absolute; font: 500 11px var(--mono); color: #fff; background: rgba(0,0,0,.55); padding: 2px 6px; letter-spacing: .06em; pointer-events: none; white-space: nowrap }
+.pip .hud { left: 0; top: 0 }
+.tl { top: 10px; left: 10px } .tr { top: 10px; right: 10px; color: #f0a63a } .br { right: 10px; bottom: 10px } .tc { top: 10px; left: 50%; transform: translateX(-50%); color: #ff8a70 }
+.reticle { position: absolute; width: 64px; height: 64px; margin: -32px 0 0 -32px; pointer-events: none; transition: border-color .15s }
+.reticle::before, .reticle::after { content: ""; position: absolute; inset: 0; border: 2px solid #f0a63a; clip-path: polygon(0 0,30% 0,30% 2px,2px 2px,2px 30%,0 30%, 0 70%,2px 70%,2px calc(100% - 2px),30% calc(100% - 2px),30% 100%,0 100%, 100% 100%,70% 100%,70% calc(100% - 2px),calc(100% - 2px) calc(100% - 2px),calc(100% - 2px) 70%,100% 70%, 100% 30%,calc(100% - 2px) 30%,calc(100% - 2px) 2px,70% 2px,70% 0,100% 0) }
+.reticle::after { inset: 28px; border-radius: 50%; clip-path: none; border-width: 2px; background: #f0a63a }
+.reticle.edge::before, .reticle.edge::after { border-color: #ffd36a } .reticle.edge::after { background: #ffd36a }
+.reticle.lost::before, .reticle.lost::after { border-color: #ff6a4d; border-style: dashed } .reticle.lost::after { background: #ff6a4d }
+.reticle span { position: absolute; top: 68px; left: 50%; transform: translateX(-50%); font: 600 11px var(--mono); color: #000; background: #f0a63a; padding: 1px 6px; letter-spacing: .08em }
+.reticle.edge span { background: #ffd36a } .reticle.lost span { background: #ff6a4d; color: #fff }
+.focus { position: absolute; width: 56px; height: 56px; margin: -28px 0 0 -28px; border: 1.5px solid #fff; border-radius: 4px; pointer-events: none; opacity: 0; transition: opacity .4s }
+.focus.on { opacity: 1; transition: none }
+.msg { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; background: rgba(0,0,0,.8); color: #eee; font-size: 14px }
+.msg p { max-width: 46ch; margin: 0 }
+.tip { font-size: 13px; color: var(--muted); text-align: center }
+
+.meter { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden }
+.meter div { background: var(--panel); padding: 10px 12px; min-width: 0 }
+.meter small { display: block; font: 500 11px var(--mono); color: var(--muted); letter-spacing: .08em; text-transform: uppercase }
+.meter strong { font: 600 26px/1.15 var(--display); font-variant-numeric: tabular-nums; overflow-wrap: anywhere }
+.meter .big strong { color: var(--accent) }
+#spark { width: 100%; height: 64px; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 6px }
+.legend { display: flex; gap: 14px; font: 12px var(--mono); color: var(--muted); flex-wrap: wrap }
+.legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 6px }
+
+.recbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap }
+.recbtn { width: 64px; height: 64px; border-radius: 50%; border: 3px solid var(--fg); background: transparent; padding: 0; display: grid; place-items: center; cursor: pointer; flex: none }
+.recbtn i { width: 46px; height: 46px; border-radius: 50%; background: var(--warn); transition: all .2s }
+.recbtn[aria-pressed="true"] i { width: 24px; height: 24px; border-radius: 4px }
+.recinfo { display: grid; gap: 4px; min-width: 0; flex: 1 }
+.recinfo strong { font: 600 20px var(--display); letter-spacing: .03em; text-transform: uppercase }
+.status { font: 13px var(--mono); color: var(--muted); min-height: 1.4em; overflow-wrap: anywhere }
+
+.deck { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px }
+.ctl { display: grid; gap: 6px; min-width: 0; align-content: start }
+.ctl > label, .ctl > .lbl { font: 500 11px var(--mono); color: var(--muted); letter-spacing: .08em; text-transform: uppercase; display: flex; justify-content: space-between; gap: 8px }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden }
+.seg button { flex: 1; min-width: 0 }
+button { font: 600 15px var(--display); letter-spacing: .05em; text-transform: uppercase; color: var(--fg); background: transparent; border: 0; padding: 10px 8px; cursor: pointer }
+button:disabled { opacity: .4; cursor: not-allowed }
+.seg button + button { border-left: 1px solid var(--line) }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink) }
+button:focus-visible, input:focus-visible, .finder:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+.solid { border: 1px solid var(--line); border-radius: 5px }
+.solid[aria-pressed="true"] { border-color: var(--accent); color: var(--accent) }
+.row { display: flex; gap: 8px; flex-wrap: wrap } .row > * { flex: 1 }
+input[type=range] { width: 100%; accent-color: var(--accent) }
+.hint { font-size: 13px; color: var(--muted) }
+.check { display: flex; gap: 8px; align-items: center; font-size: 14px }
+.check input { width: 18px; height: 18px; accent-color: var(--accent) }
+
+section.sdk { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 16px }
+section.sdk h2 { font: 700 22px var(--display); text-transform: uppercase; letter-spacing: .03em; margin: 0 }
+section.sdk p { margin: 0; max-width: 68ch }
+pre { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; overflow-x: auto; font: 13px/1.55 var(--mono) }
+@media (max-width: 560px) { .meter { grid-template-columns: repeat(2, minmax(0, 1fr)) } h1 { font-size: 28px } .reticle { width: 52px; height: 52px; margin: -26px 0 0 -26px } .reticle::after { inset: 22px } .reticle span { top: 56px } }
+@media (prefers-reduced-motion: reduce) { .pill.rec i { animation: none } .recbtn i { transition: none } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div><h1>Steady<b>Cam</b><sup>v2</sup></h1><div class="tag">Live stabilizer · target lock-on · no gimbal, no stand</div></div>
+    <span class="pill" id="state"><i></i><span id="stateText">Starting</span></span>
+  </header>
+
+  <div class="stage">
+    <div class="finder" id="finder" tabindex="0" aria-label="Viewfinder. Tap to lock on a subject.">
+      <canvas id="out" aria-label="Stabilized live video"></canvas>
+      <div class="pip"><canvas id="raw" aria-label="Raw camera feed"></canvas><span class="hud">RAW</span></div>
+      <span class="hud tl" id="srcLabel">DEMO</span>
+      <span class="hud tc" id="recLabel" hidden>● REC 00:00</span>
+      <span class="hud tr" id="stabLabel">SMOOTH</span>
+      <span class="hud br" id="zoomLabel">1.0×</span>
+      <div class="reticle" id="reticle" hidden><span id="reticleText">LOCKED</span></div>
+      <div class="focus" id="focusBox"></div>
+      <div class="msg" id="msg" hidden><p id="msgText"></p></div>
+    </div>
+  </div>
+  <div class="tip" id="tip">Target lock: tap any subject in the viewfinder. Pinch or use the slider to zoom.</div>
+
+  <div class="recbar">
+    <button class="recbtn" id="rec" aria-pressed="false" aria-label="Start recording"><i></i></button>
+    <div class="recinfo">
+      <strong id="recTitle">Ready to record</strong>
+      <div class="status" id="recStatus">Records the stabilized live view at full quality.</div>
+    </div>
+    <div class="row" style="flex:0 1 auto">
+      <button class="solid" id="unlock" hidden>Unlock target</button>
+      <button class="solid" id="saveAgain" hidden>Save clip</button>
+      <button class="solid" id="share" hidden>Save to Photos</button>
+    </div>
+  </div>
+
+  <div class="meter" aria-live="off">
+    <div class="big"><small>Shake removed</small><strong id="mRed">–</strong></div>
+    <div><small>Raw jitter</small><strong id="mRaw">–</strong></div>
+    <div><small>Output jitter</small><strong id="mOut">–</strong></div>
+    <div><small>Target</small><strong id="mTgt">–</strong></div>
+  </div>
+  <canvas id="spark" aria-label="Horizontal camera path: raw versus stabilized"></canvas>
+  <div class="legend"><span><i style="background:var(--raw)"></i>Raw camera path</span><span><i style="background:var(--accent)"></i>Stabilized path</span><span id="mInfo"></span></div>
+
+  <div class="deck">
+    <div class="ctl"><span class="lbl">Source</span>
+      <div class="seg" id="srcSeg">
+        <button id="srcDemo" aria-pressed="true">Demo</button>
+        <button id="srcCam" aria-pressed="false">Camera</button>
+        <button id="srcFile" aria-pressed="false">Video file</button>
+      </div>
+      <input type="file" id="file" accept="video/*" hidden>
+      <div class="row"><button class="solid" id="flip" disabled>Flip camera</button><button class="solid" id="torch" disabled aria-pressed="false">Torch</button></div>
+    </div>
+    <div class="ctl"><span class="lbl">Stabilization</span>
+      <div class="seg" id="modeSeg">
+        <button id="modeSmooth" aria-pressed="true">Smooth</button>
+        <button id="modeLock" aria-pressed="false">Tripod</button>
+        <button id="modeTarget" aria-pressed="false">Target lock</button>
+      </div>
+      <span class="hint" id="modeHint">Removes shake and keeps your intentional pans.</span>
+    </div>
+    <div class="ctl"><label for="zoom">Zoom <span id="zoomVal">1.0×</span></label>
+      <input type="range" id="zoom" min="1" max="4" step="0.05" value="1">
+      <span class="hint" id="zoomHint">Zooming in also gives the lock more room to move.</span>
+    </div>
+    <div class="ctl"><label for="crop">Stabilization margin <span id="cropVal">10%</span></label>
+      <input type="range" id="crop" min="4" max="18" value="10">
+      <span class="hint">A bigger margin absorbs bigger moves. The camera records in 4K where it can, so the crop doesn't reduce 1080p output detail.</span>
+    </div>
+    <div class="ctl"><span class="lbl">Output quality</span>
+      <div class="seg" id="qSeg">
+        <button data-q="720" aria-pressed="false">720p</button>
+        <button data-q="1080" aria-pressed="true">1080p</button>
+        <button data-q="2160" aria-pressed="false">4K</button>
+      </div>
+      <div class="seg" id="fpsSeg">
+        <button data-f="30" aria-pressed="true">30 fps</button>
+        <button data-f="60" aria-pressed="false">60 fps</button>
+      </div>
+    </div>
+    <div class="ctl"><span class="lbl">Options</span>
+      <label class="check"><input type="checkbox" id="stabOn" checked> Stabilizer on</label>
+      <label class="check"><input type="checkbox" id="autosave" checked> Auto-save when recording stops</label>
+      <label class="check"><input type="checkbox" id="mic" checked> Record sound</label>
+    </div>
+  </div>
+
+  <section class="sdk">
+    <h2>Plug it into any camera app</h2>
+    <p>Other web apps turn it on with one line. Every camera stream they open comes back stabilized, so their recording, streaming and video calls get it with no other changes.</p>
+<pre>&lt;script src="steadycam.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+  SteadyCam.install({ mode: 'smooth' });   // every getUserMedia video is now stabilized
+
+  // or wrap a stream yourself and keep control:
+  const { stream, cam } = await SteadyCam.stabilizeStream(cameraStream, { mode: 'target', output: 1080 });
+  cam.lockAtScreen(x, y);   cam.setZoom(2);   cam.unlock();
+  const rec = new SteadyCam.Recorder(stream, cam);  rec.start();  const clip = await rec.stop();
+&lt;/script&gt;</pre>
+    <p class="hint">Live camera works when this page is opened directly in Safari or Chrome over HTTPS. Inside a preview, use Demo or Video file.</p>
+    <div class="row" style="max-width:340px"><button class="solid" id="getApp">Save standalone app (.html)</button></div>
+  </section>
+</div>
+
+<script>
+/*@SDK@*/
+</script>
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const out = $('out'), rawC = $('raw'), rctx = rawC.getContext('2d'), finder = $('finder');
+  const S = { source: null, stream: null, video: null, demo: null, rec: null, lastClip: null, facing: 'environment',
+    quality: 1080, fps: 30, hwZoom: null, track: null, torch: false };
+  const hist = [];
+
+  // ---------- built-in demo: handheld street shot with a drone to lock on ----------
+  function makeDemo() {
+    const scene = document.createElement('canvas'); scene.width = 1600; scene.height = 1000;
+    const g = scene.getContext('2d');
+    const sky = g.createLinearGradient(0, 0, 0, 640); sky.addColorStop(0, '#2c3d58'); sky.addColorStop(1, '#c98a55');
+    g.fillStyle = sky; g.fillRect(0, 0, 1600, 1000);
+    let s = 3; const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+    for (let i = 0; i < 26; i++) {
+      const w = 50 + rnd() * 90, h = 180 + rnd() * 360, x = i * 64 - 40;
+      g.fillStyle = `hsl(${210 + rnd() * 20},18%,${14 + rnd() * 12}%)`; g.fillRect(x, 640 - h, w, h + 40);
+      g.fillStyle = 'rgba(255,214,140,.85)';
+      for (let y = 640 - h + 14; y < 630; y += 22) for (let xx = x + 8; xx < x + w - 10; xx += 16) if (rnd() < 0.45) g.fillRect(xx, y, 7, 10);
+    }
+    g.fillStyle = '#2a2c2a'; g.fillRect(0, 660, 1600, 340);
+    g.fillStyle = '#e9e3cf'; for (let x = 0; x < 1600; x += 120) g.fillRect(x, 800, 70, 10);
+    const frame = document.createElement('canvas'); frame.width = 1280; frame.height = 720;
+    const f = frame.getContext('2d'); let t = 0;
+    const drone = (x, y) => {
+      f.save(); f.translate(x, y);
+      f.strokeStyle = '#151515'; f.lineWidth = 10; f.beginPath(); f.moveTo(-48, -32); f.lineTo(48, 32); f.moveTo(48, -32); f.lineTo(-48, 32); f.stroke();
+      for (const [px, py] of [[-50, -34], [50, -34], [-50, 34], [50, 34]]) { f.fillStyle = '#222'; f.beginPath(); f.arc(px, py, 20, 0, 7); f.fill(); f.fillStyle = '#ddd'; f.beginPath(); f.arc(px, py, 7, 0, 7); f.fill(); }
+      f.fillStyle = '#f07a2a'; f.fillRect(-26, -18, 52, 36); f.fillStyle = '#fff'; f.fillRect(-8, -6, 16, 12);
+      f.restore();
+    };
+    const api = { canvas: frame, pose: null,
+      dronePos() { return [800 + 150 * Math.sin(t * 0.32), 340 + 60 * Math.sin(t * 0.64)]; },
+      tick() {
+        t += 1 / 30;
+        const n = (a, b) => Math.sin(t * a + b) + 0.5 * Math.sin(t * a * 2.3 + b * 1.7);
+        const tx = 24 * n(9.1, 0) + 14 * Math.sin(t * 0.7), ty = 18 * n(11.3, 2) + 8 * Math.sin(t * 2.1);
+        const sc = 1 + 0.035 * Math.sin(t * 2.6) + 0.012 * n(7, 4);      // phone moving inches front/back
+        const rot = 0.02 * n(8.3, 1), base = 1.0;
+        f.setTransform(1, 0, 0, 1, 0, 0); f.fillStyle = '#000'; f.fillRect(0, 0, 1280, 720);
+        f.translate(640 + tx, 360 + ty); f.rotate(rot); f.scale(sc * base, sc * base); f.translate(-800, -500);
+        f.drawImage(scene, 0, 0); const d = this.dronePos(); drone(d[0], d[1]);
+        this.pose = { tx, ty, sc: sc * base, rot };
+      },
+      droneInFrame() {   // where the drone is in the current demo frame (source pixels)
+        const p = this.pose, d = this.dronePos(), x = d[0] - 800, y = d[1] - 500, c = Math.cos(p.rot) * p.sc, s2 = Math.sin(p.rot) * p.sc;
+        return [640 + p.tx + c * x - s2 * y, 360 + p.ty + s2 * x + c * y];
+      } };
+    api.tick();
+    return api;
+  }
+
+  const cam = new SteadyCam(document.createElement('canvas'), { canvas: out, mode: 'smooth', crop: 0.1, output: S.quality,
+    onFrame, beforeFrame: () => { if (S.demo) S.demo.tick(); } });
+
+  // ---------- helpers ----------
+  const pressed = (seg, btn) => { for (const b of $(seg).querySelectorAll('button')) b.setAttribute('aria-pressed', b === btn); };
+  const showMsg = (t) => { $('msgText').textContent = t || ''; $('msg').hidden = !t; };
+  const setState = (t, cls) => { $('stateText').textContent = t; $('state').className = 'pill ' + (cls || ''); };
+  const fmtTime = (ms) => { const s = Math.floor(ms / 1000); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+  let wake = null;
+  async function keepAwake(on) { try { if (on && !wake && navigator.wakeLock) wake = await navigator.wakeLock.request('screen'); else if (!on && wake) { await wake.release(); wake = null; } } catch (e) { wake = null; } }
+
+  function setSource(el, label) { S.source = el; cam.setSource(el); hist.length = 0; $('srcLabel').textContent = label; }
+  function stopAll() {
+    if (S.demo) S.demo = null;
+    if (S.stream) { S.stream.getTracks().forEach(t => t.stop()); S.stream = null; }
+    if (S.video) { S.video.pause(); if (S.video.src) URL.revokeObjectURL(S.video.src); S.video.remove(); S.video = null; }
+    S.track = null; S.hwZoom = null; $('flip').disabled = true; $('torch').disabled = true; keepAwake(false);
+  }
+  function hiddenVideo() {
+    const v = document.createElement('video'); v.playsInline = true; v.setAttribute('playsinline', ''); v.muted = true;
+    Object.assign(v.style, { position: 'fixed', width: '2px', height: '2px', opacity: '0.01', left: '0', top: '0', pointerEvents: 'none' });
+    document.body.appendChild(v); return v;
+  }
+
+  // ---------- sources ----------
+  function useDemo() {
+    stopRec(); stopAll(); showMsg('');
+    S.demo = makeDemo(); setSource(S.demo.canvas, 'DEMO · HANDHELD 1280×720'); pressed('srcSeg', $('srcDemo')); setState('Live', 'live');
+    setMode('target'); setZoom(1.15);
+    let n = 0; const auto = () => { if (!S.demo) return; if (++n < 40) return requestAnimationFrame(auto); const p = S.demo.droneInFrame(); cam.lockAtSource(p[0], p[1]); };
+    requestAnimationFrame(auto);
+  }
+  async function useCamera() {
+    stopRec(); pressed('srcSeg', $('srcCam'));
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showMsg('This view has no camera access. Open the SteadyCam page directly in Safari or Chrome over HTTPS, or load a video file.'); return;
+    }
+    const big = S.quality >= 1080;   // capture 4K when possible so crop and zoom keep full output detail
+    const v = { facingMode: { ideal: S.facing }, width: { ideal: big ? 3840 : 1920 }, height: { ideal: big ? 2160 : 1080 }, frameRate: { ideal: S.fps } };
+    let s;
+    try { s = await navigator.mediaDevices.getUserMedia({ video: v, audio: $('mic').checked }); }
+    catch (e) {
+      try { s = await navigator.mediaDevices.getUserMedia({ video: v }); }
+      catch (e2) { showMsg('Camera access was refused. Allow camera access for this site in your browser settings, open the page over HTTPS, or load a video file.'); setState('No camera'); return; }
+    }
+    stopAll(); S.stream = s; showMsg('');
+    const track = s.getVideoTracks()[0]; S.track = track;
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    try { await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e) {}
+    S.hwZoom = caps.zoom && caps.zoom.max > 1 ? caps.zoom : null;
+    $('zoom').max = S.hwZoom ? Math.max(4, Math.min(10, caps.zoom.max * 2)) : 4;
+    $('zoomHint').textContent = S.hwZoom ? 'Uses the lens zoom first, then digital zoom.' : 'Digital zoom from the full-resolution frame.';
+    $('torch').disabled = !caps.torch; $('flip').disabled = false;
+    S.video = hiddenVideo(); S.video.srcObject = s; await S.video.play().catch(() => {});
+    const st = track.getSettings();
+    setSource(S.video, (S.facing === 'user' ? 'FRONT' : 'BACK') + ' CAM ' + (st.width || '?') + '×' + (st.height || '?') + ' @' + Math.round(st.frameRate || S.fps));
+    setState('Live', 'live'); setZoom(+$('zoom').value); keepAwake(true);
+  }
+  function useFile(file) {
+    stopRec(); stopAll(); showMsg('');
+    S.video = hiddenVideo(); S.video.loop = true; S.video.src = URL.createObjectURL(file);
+    S.video.play().catch(() => showMsg('This video format cannot be played here. Try an MP4 or WebM clip.'));
+    setSource(S.video, 'FILE · ' + file.name.slice(0, 22).toUpperCase()); pressed('srcSeg', $('srcFile')); setState('Live', 'live');
+  }
+
+  // ---------- modes, zoom, tap-to-lock ----------
+  const hints = { smooth: 'Removes shake and keeps your intentional pans.', lock: 'Holds the framing still like a tripod, including size when you move forward or back.', target: 'Tap a subject. It stays fixed on screen while you move, like a lock-on.' };
+  function setMode(m) {
+    cam.setMode(m); if (m !== 'target') cam.unlock();
+    pressed('modeSeg', $({ smooth: 'modeSmooth', lock: 'modeLock', target: 'modeTarget' }[m])); $('modeHint').textContent = hints[m];
+    $('stabLabel').textContent = { smooth: 'SMOOTH', lock: 'TRIPOD', target: 'TARGET' }[m];
+  }
+  function setZoom(z) {
+    z = Math.max(1, Math.min(+$('zoom').max, z)); $('zoom').value = z;
+    let digital = z;
+    if (S.hwZoom && S.track) {
+      const hw = Math.max(S.hwZoom.min || 1, Math.min(S.hwZoom.max, z));
+      S.track.applyConstraints({ advanced: [{ zoom: hw }] }).catch(() => {}); digital = z / hw;
+    }
+    cam.setZoom(digital);
+    $('zoomVal').textContent = $('zoomLabel').textContent = z.toFixed(1) + '×';
+  }
+  function toCanvas(e) { const r = out.getBoundingClientRect(); return [(e.clientX - r.left) * out.width / r.width, (e.clientY - r.top) * out.height / r.height]; }
+  function tapAt(e) {
+    const [x, y] = toCanvas(e);
+    if (cam.mode === 'target') {
+      if (!cam.lockAtScreen(x, y)) { $('tip').textContent = 'Nothing to lock on there. Tap a spot with detail, like an edge, a face or text.'; flashFocus(e); return; }
+      $('tip').textContent = 'Locked. Move the phone: the subject stays put. Tap elsewhere to re-lock.';
+    } else {
+      $('tip').textContent = 'Focus set. Choose Target lock to keep a subject fixed on screen.';
+    }
+    if (S.track) {   // also focus where the user tapped, where the camera supports it
+      const st = S.track.getSettings(); const r = out.getBoundingClientRect();
+      S.track.applyConstraints({ advanced: [{ pointsOfInterest: [{ x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }], focusMode: st.focusMode === 'continuous' ? 'continuous' : 'single-shot' }] }).catch(() => {});
+    }
+    flashFocus(e);
+  }
+  function flashFocus(e) { const r = finder.getBoundingClientRect(), b = $('focusBox'); b.style.left = (e.clientX - r.left) + 'px'; b.style.top = (e.clientY - r.top) + 'px'; b.classList.add('on'); setTimeout(() => b.classList.remove('on'), 60); }
+
+  const pts = new Map(); let pinch = null, down = null;
+  finder.addEventListener('pointerdown', (e) => {
+    finder.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]);
+    if (pts.size === 1) down = { x: e.clientX, y: e.clientY, t: Date.now() };
+    if (pts.size === 2) { const [a, b] = [...pts.values()]; pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), z: +$('zoom').value }; down = null; }
+  });
+  finder.addEventListener('pointermove', (e) => {
+    if (!pts.has(e.pointerId)) return; pts.set(e.pointerId, [e.clientX, e.clientY]);
+    if (pinch && pts.size === 2) { const [a, b] = [...pts.values()]; setZoom(pinch.z * Math.hypot(a[0] - b[0], a[1] - b[1]) / pinch.d); }
+  });
+  const up = (e) => {
+    pts.delete(e.pointerId); if (pts.size < 2) pinch = null;
+    if (down && pts.size === 0 && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 12 && Date.now() - down.t < 500) tapAt(e);
+    if (pts.size === 0) down = null;
+  };
+  finder.addEventListener('pointerup', up); finder.addEventListener('pointercancel', (e) => { pts.delete(e.pointerId); pinch = null; down = null; });
+  finder.addEventListener('wheel', (e) => { e.preventDefault(); setZoom(+$('zoom').value * (e.deltaY < 0 ? 1.06 : 1 / 1.06)); }, { passive: false });
+
+  // ---------- per-frame readouts ----------
+  function onFrame(st) {
+    const sw = S.source.videoWidth || S.source.width, sh = S.source.videoHeight || S.source.height;
+    const ar = out.width / out.height;
+    if (finder.dataset.ar !== String(ar)) { finder.dataset.ar = ar; finder.style.aspectRatio = out.width + ' / ' + out.height; finder.style.width = 'min(100%, calc(70vh * ' + ar.toFixed(4) + '))'; }
+    const rw = ar >= 1 ? 320 : 180; if (rawC.width !== rw) rawC.width = rw;
+    const rh = Math.round(rw * sh / sw); if (rawC.height !== rh) rawC.height = rh;
+    rctx.drawImage(S.source, 0, 0, rawC.width, rawC.height);
+    hist.push([st.rawPos[0], st.stabPos[0]]); if (hist.length > 180) hist.shift();
+    // reticle
+    const p = cam.lockScreenPoint(), ret = $('reticle');
+    if (p && cam.mode === 'target') {
+      ret.hidden = false; ret.style.left = (p.x / out.width * 100) + '%'; ret.style.top = (p.y / out.height * 100) + '%';
+      const state = st.target === 'lost' ? 'lost' : st.edge ? 'edge' : 'ok';
+      ret.className = 'reticle ' + (state === 'ok' ? '' : state);
+      $('reticleText').textContent = state === 'lost' ? 'SEARCHING' : state === 'edge' ? 'AT EDGE' : 'LOCKED';
+      $('unlock').hidden = false;
+    } else { ret.hidden = true; $('unlock').hidden = true; }
+  }
+  setInterval(() => {
+    const st = cam.stats;
+    $('mRed').textContent = cam.enabled ? Math.round(st.reduction * 100) + '%' : 'off';
+    $('mRaw').textContent = st.rawRms.toFixed(1) + ' px';
+    $('mOut').textContent = (cam.enabled ? st.stabRms : st.rawRms).toFixed(1) + ' px';
+    $('mTgt').textContent = cam.mode !== 'target' ? 'off' : st.target === 'idle' ? 'tap' : st.target === 'lost' ? 'search' : st.edge ? 'edge' : 'locked';
+    $('mInfo').textContent = 'out ' + out.width + '×' + out.height + ' · analysis ' + st.ms.toFixed(1) + ' ms · points ' + st.inliers + '/' + st.points;
+    if (S.rec) $('recLabel').textContent = '● REC ' + fmtTime(Date.now() - S.rec.startedAt);
+    drawSpark();
+  }, 150);
+  function drawSpark() {
+    const c = $('spark'), dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+    if (!w) return;
+    if (c.width !== Math.round(w * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+    const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+    if (hist.length < 2) return;
+    const cs = getComputedStyle(document.documentElement);
+    let lo = Infinity, hi = -Infinity; for (const p of hist) { lo = Math.min(lo, p[0], p[1]); hi = Math.max(hi, p[0], p[1]); }
+    const pad = Math.max(4, (hi - lo) * 0.1); lo -= pad; hi += pad;
+    const X = (i) => 6 + i * (w - 12) / 179, Y = (v) => h - 6 - (v - lo) / (hi - lo) * (h - 12);
+    for (const [idx, col, lw] of [[0, '--raw', 1.2], [1, '--accent', 2.2]]) {
+      g.strokeStyle = cs.getPropertyValue(col).trim(); g.lineWidth = lw; g.beginPath();
+      hist.forEach((p, i) => i ? g.lineTo(X(i), Y(p[idx])) : g.moveTo(X(i), Y(p[idx]))); g.stroke();
+    }
+  }
+
+  // ---------- recording, autosave, save to Photos ----------
+  let dl = null;
+  if (window.claude && window.claude.use) window.claude.use('downloads').then(d => { dl = d; }).catch(() => {});
+  async function saveBlob(blob, name) {
+    if (dl) {
+      try { await dl.save({ filename: name, data: blob }); return 'Saved ' + name; }
+      catch (e) { return e && e.code === 'declined' ? 'Save cancelled. Tap Save clip to try again.' : 'Saving is not available in this view.'; }
+    }
+    if (window.claude) return 'Saving is not available in this view.';
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.append(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 60000); return 'Saved ' + name + ' to Downloads';
+  }
+  function startRec() {
+    if (!window.MediaRecorder) { $('recStatus').textContent = 'Recording is not supported in this browser.'; return; }
+    const s = cam.captureStream(S.fps);
+    if (S.stream && $('mic').checked) S.stream.getAudioTracks().forEach(t => s.addTrack(t));
+    const r = new SteadyCam.Recorder(s, cam);
+    try { r.start(); } catch (e) { $('recStatus').textContent = 'Recording could not start in this browser.'; return; }
+    S.rec = r; $('rec').setAttribute('aria-pressed', 'true'); $('rec').setAttribute('aria-label', 'Stop recording');
+    $('recLabel').hidden = false; $('recTitle').textContent = 'Recording';
+    $('recStatus').textContent = out.width + '×' + out.height + ' · ' + S.fps + ' fps · ' + Math.round(r.bitrate / 1e6) + ' Mbps · ' + r.extension.toUpperCase();
+    $('saveAgain').hidden = true; $('share').hidden = true; setState('Recording', 'rec'); keepAwake(true);
+  }
+  async function stopRec() {
+    if (!S.rec) return;
+    const r = S.rec; S.rec = null;
+    $('rec').setAttribute('aria-pressed', 'false'); $('rec').setAttribute('aria-label', 'Start recording'); $('recLabel').hidden = true;
+    setState('Live', 'live');
+    const blob = await r.stop();
+    if (!blob.size) { $('recTitle').textContent = 'Ready to record'; $('recStatus').textContent = 'Nothing was recorded.'; return; }
+    const name = 'steadycam-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.' + r.extension;
+    S.lastClip = { blob, name };
+    $('recTitle').textContent = 'Clip ready · ' + (blob.size / 1e6).toFixed(1) + ' MB';
+    $('saveAgain').hidden = false;
+    const file = new File([blob], name, { type: blob.type });
+    $('share').hidden = !(navigator.canShare && navigator.canShare({ files: [file] }));
+    $('recStatus').textContent = $('autosave').checked ? await saveBlob(blob, name) : 'Tap Save clip to keep it.';
+  }
+
+  // ---------- controls ----------
+  $('srcDemo').onclick = useDemo;
+  $('srcCam').onclick = useCamera;
+  $('srcFile').onclick = () => $('file').click();
+  $('file').onchange = (e) => { const f = e.target.files[0]; if (f) useFile(f); e.target.value = ''; };
+  $('flip').onclick = () => { S.facing = S.facing === 'environment' ? 'user' : 'environment'; useCamera(); };
+  $('torch').onclick = () => { if (!S.track) return; S.torch = !S.torch; S.track.applyConstraints({ advanced: [{ torch: S.torch }] }).catch(() => {}); $('torch').setAttribute('aria-pressed', S.torch); };
+  $('modeSmooth').onclick = () => setMode('smooth');
+  $('modeLock').onclick = () => setMode('lock');
+  $('modeTarget').onclick = () => { setMode('target'); $('tip').textContent = 'Tap the subject you want to keep fixed on screen.'; };
+  $('unlock').onclick = () => { cam.unlock(); $('tip').textContent = 'Unlocked. Tap a subject to lock again.'; };
+  $('zoom').oninput = (e) => setZoom(+e.target.value);
+  $('crop').oninput = (e) => { cam.setCrop(+e.target.value / 100); $('cropVal').textContent = e.target.value + '%'; };
+  $('stabOn').onchange = (e) => { cam.setEnabled(e.target.checked); $('stabLabel').textContent = e.target.checked ? $('stabLabel').textContent.replace(' OFF', '') : 'STAB OFF'; };
+  for (const b of $('qSeg').querySelectorAll('button')) b.onclick = () => { if (S.rec) return; S.quality = +b.dataset.q; pressed('qSeg', b); cam.setOutput(S.quality); if (S.stream) useCamera(); };
+  for (const b of $('fpsSeg').querySelectorAll('button')) b.onclick = () => { if (S.rec) return; S.fps = +b.dataset.f; pressed('fpsSeg', b); if (S.stream) useCamera(); };
+  $('rec').onclick = () => S.rec ? stopRec() : startRec();
+  $('saveAgain').onclick = async () => { if (S.lastClip) $('recStatus').textContent = await saveBlob(S.lastClip.blob, S.lastClip.name); };
+  $('share').onclick = async () => {
+    if (!S.lastClip) return;
+    try { await navigator.share({ files: [new File([S.lastClip.blob], S.lastClip.name, { type: S.lastClip.blob.type })] }); $('recStatus').textContent = 'Shared. Choose Save Video to put it in Photos.'; }
+    catch (e) { if (e.name !== 'AbortError') $('recStatus').textContent = 'Sharing is not available here. Use Save clip.'; }
+  };
+  $('getApp').onclick = async () => {
+    const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body>' + document.body.innerHTML + '</body></html>';
+    $('recStatus').textContent = await saveBlob(new Blob([html], { type: 'text/html' }), 'steadycam.html');
+  };
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && (S.rec || S.stream)) keepAwake(true); });
+
+  useDemo();
+  cam.start();
+})();
+</script>

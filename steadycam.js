@@ -162,7 +162,7 @@
     reset() { this.prev = null; }
     /** returns {dx,dy,da,dls} in analysis pixels (frame-centred), or identity if unreliable */
     process(gray) {
-      const pyr = buildPyramid(gray, this.w, this.h);
+      const pyr = buildPyramid(gray.slice(), this.w, this.h);   // own copy: callers reuse their buffer
       const prev = this.prev; this.prev = pyr;
       const ident = { dx: 0, dy: 0, da: 0, dls: 0, ok: false };
       if (!prev) return ident;
@@ -188,13 +188,14 @@
       this.w = o.w || this.w || 160; this.h = o.h || this.h || 120;
     }
     reset() { this.raw = [0, 0, 0, 0]; this.sm = [0, 0, 0, 0]; }
-    update(m) {
+    /** m: frame motion; limXY (optional): exact translation headroom {x,y} in analysis px from the renderer */
+    update(m, limXY) {
       const r = this.raw, s = this.sm;
       r[0] += m.dx; r[1] += m.dy; r[2] += m.da; r[3] += m.dls;
       // smooth: low-pass (keeps intentional pans); lock: hold framing like a tripod, tiny drift-back
-      const a = this.mode === 'lock' ? [0.004, 0.004, 0.01, 0.01] : [0.07, 0.07, 0.08, 0.08];
+      const a = this.mode === 'smooth' ? [0.07, 0.07, 0.08, 0.08] : [0.004, 0.004, 0.01, 0.01];
       for (let i = 0; i < 4; i++) s[i] += a[i] * (r[i] - s[i]);
-      const lim = [this.margin * this.w, this.margin * this.h, 0.06, Math.log(1 + this.margin)];
+      const lim = [limXY ? limXY.x : this.margin * this.w, limXY ? limXY.y : this.margin * this.h, 0.06, Math.log(1 + this.margin)];
       const c = [0, 0, 0, 0];
       for (let i = 0; i < 4; i++) {
         let d = s[i] - r[i];
@@ -205,15 +206,210 @@
     }
   }
 
-  const api = { toGray, downsample2, detectPoints, trackPoint, buildPyramid, ransacSimilarity, MotionEstimator, TrajectorySmoother };
+  /**
+   * Target lock-on ("homing") tracker.
+   * Each frame: predict where the locked target went using the measured camera motion
+   * (precise, from the whole frame) plus the target's own velocity, then confirm with a
+   * zero-mean NCC template search around the prediction, and fuse with an alpha-beta filter.
+   * If the target is briefly hidden it coasts on the prediction and re-acquires with a wider search.
+   */
+  class TargetTracker {
+    constructor(w, h, opts) {
+      opts = opts || {};
+      this.w = w; this.h = h;
+      this.r = opts.radius || Math.max(6, Math.round(w * 0.05));
+      this.search = opts.search || 10;
+      this.state = 'idle'; this.score = 0; this.lost = 0;
+    }
+    _stats(g, x, y) {
+      const r = this.r, w = this.w; let s = 0, s2 = 0;
+      for (let dy = -r; dy <= r; dy++) { let i = (y + dy) * w + x - r; for (let dx = -r; dx <= r; dx++, i++) { const v = g[i]; s += v; s2 += v * v; } }
+      const n = (2 * r + 1) ** 2, mu = s / n;
+      return [mu, Math.sqrt(Math.max(0, s2 / n - mu * mu))];
+    }
+    _patch(g, x, y) {
+      const r = this.r, w = this.w, [mu, sd] = this._stats(g, x, y), out = new Float32Array((2 * r + 1) ** 2);
+      let k = 0;
+      for (let dy = -r; dy <= r; dy++) { let i = (y + dy) * w + x - r; for (let dx = -r; dx <= r; dx++, i++) out[k++] = (g[i] - mu) / (sd || 1); }
+      return { p: out, sd };
+    }
+    _inside(x, y, pad) { const r = this.r + (pad || 0); return x >= r && y >= r && x < this.w - r && y < this.h - r; }
+    _ncc(g, x, y) {
+      const r = this.r, w = this.w, T = this.T, [mu, sd] = this._stats(g, x, y);
+      if (sd < 1e-3) return -1;
+      let s = 0, k = 0;
+      for (let dy = -r; dy <= r; dy++) { let i = (y + dy) * w + x - r; for (let dx = -r; dx <= r; dx++, i++) s += T[k++] * (g[i] - mu); }
+      return s / (T.length * sd);
+    }
+    /** Lock onto the feature at analysis pixel (x, y). Returns false on a featureless spot. */
+    lock(g, x, y) {
+      let ix = Math.round(x), iy = Math.round(y);
+      if (!this._inside(ix, iy, 1)) return false;
+      // snap to the most trackable spot (strongest 2-D texture) within a few pixels of the tap
+      let bestS = -1, bx = ix, by = iy, w = this.w, r = this.r;
+      for (let yy = iy - 4; yy <= iy + 4; yy++) for (let xx = ix - 4; xx <= ix + 4; xx++) {
+        if (!this._inside(xx, yy, 2)) continue;
+        let sxx = 0, syy = 0, sxy = 0;
+        for (let dy = -r; dy <= r; dy += 2) for (let dx = -r; dx <= r; dx += 2) {
+          const i = (yy + dy) * w + xx + dx, gx = (g[i + 1] - g[i - 1]) * 0.5, gy = (g[i + w] - g[i - w]) * 0.5;
+          sxx += gx * gx; syy += gy * gy; sxy += gx * gy;
+        }
+        const tr = (sxx + syy) / 2, d = (sxx - syy) / 2, s = tr - Math.sqrt(d * d + sxy * sxy);
+        const pen = s * (1 - 0.03 * Math.hypot(xx - ix, yy - iy));          // prefer the tapped spot
+        if (pen > bestS) { bestS = pen; bx = xx; by = yy; }
+      }
+      ix = bx; iy = by;
+      const { p, sd } = this._patch(g, ix, iy);
+      if (sd < 3) return false;
+      this.T = p; this.x = ix; this.y = iy; this.vx = 0; this.vy = 0;
+      this.state = 'locked'; this.lost = 0; this.score = 1;
+      return true;
+    }
+    unlock() { this.state = 'idle'; }
+    /** g: current gray frame, m: camera motion prev->cur ({dx,dy,da,dls}, frame-centred) */
+    update(g, m) {
+      if (this.state === 'idle') return this;
+      const cx = this.w / 2, cy = this.h / 2, s = Math.exp(m.dls || 0);
+      const a = s * Math.cos(m.da || 0), b = s * Math.sin(m.da || 0);
+      const px = this.x - cx, py = this.y - cy;
+      const qx = a * px - b * py + (m.dx || 0) + cx + this.vx, qy = b * px + a * py + (m.dy || 0) + cy + this.vy;
+      const R = this.state === 'lost' ? this.search * 2 : this.search;
+      const gx = Math.round(qx), gy = Math.round(qy);
+      let best = -2, bx = gx, by = gy;
+      const sc = new Map();
+      for (let y = gy - R; y <= gy + R; y++) for (let x = gx - R; x <= gx + R; x++) {
+        if (!this._inside(x, y, 1)) continue;
+        const v = this._ncc(g, x, y); sc.set(y * this.w + x, v);
+        if (v > best) { best = v; bx = x; by = y; }
+      }
+      this.score = best;
+      if (best > 0.55) {
+        // sub-pixel peak
+        const at = (x, y) => { const k = y * this.w + x; return sc.has(k) ? sc.get(k) : this._ncc(g, x, y); };
+        let ox = 0, oy = 0;
+        const l = at(bx - 1, by), rr = at(bx + 1, by), u = at(bx, by - 1), d = at(bx, by + 1);
+        const dxn = l - 2 * best + rr, dyn = u - 2 * best + d;
+        if (dxn < 0) ox = Math.max(-0.5, Math.min(0.5, 0.5 * (l - rr) / dxn));
+        if (dyn < 0) oy = Math.max(-0.5, Math.min(0.5, 0.5 * (u - d) / dyn));
+        const ix = bx + ox - qx, iy = by + oy - qy;
+        // alpha-beta (homing) gains; measurement weighted by match confidence, prediction is
+        // already precise because it comes from the whole-frame camera motion
+        const conf = Math.min(1, Math.max(0, (best - 0.55) / 0.35));
+        const G = this.state === 'lost' ? 1 : 0.3 * conf, H = 0.06 * conf;
+        this.x = qx + G * ix; this.y = qy + G * iy;
+        this.vx = (this.vx + H * ix) * 0.98; this.vy = (this.vy + H * iy) * 0.98;
+        if (best > 0.8) {                                           // adapt to slow appearance change
+          const { p } = this._patch(g, Math.round(this.x), Math.round(this.y));
+          for (let k = 0; k < p.length; k++) this.T[k] = 0.95 * this.T[k] + 0.05 * p[k];
+        }
+        this.lost = 0; this.state = 'locked';
+      } else {
+        this.x = qx; this.y = qy; this.vx *= 0.9; this.vy *= 0.9;   // coast on prediction
+        if (++this.lost > 10) this.state = 'lost';
+      }
+      if (!this._inside(this.x, this.y, 0)) { this.state = 'lost'; this.lost = Math.max(this.lost, 11); }
+      return this;
+    }
+  }
+
+  /**
+   * Translation that puts the target (frame-centred analysis px) at the lock point, given the
+   * rotation/scale correction c, clamped to the available headroom lim {x,y}.
+   */
+  function targetCorrection(tx, ty, lockX, lockY, c, lim) {
+    const a = c.scale * Math.cos(c.da), b = c.scale * Math.sin(c.da);
+    let dx = lockX - (a * tx - b * ty), dy = lockY - (b * tx + a * ty);
+    const ex = Math.abs(dx) > lim.x, ey = Math.abs(dy) > lim.y;
+    dx = Math.max(-lim.x, Math.min(lim.x, dx)); dy = Math.max(-lim.y, Math.min(lim.y, dy));
+    return { dx, dy, atEdge: ex || ey };
+  }
+
+  /**
+   * Complete per-frame stabilization logic (everything except pixel drawing).
+   * Geometry: G = output pixels per analysis pixel (includes crop zoom + user zoom),
+   * W,H = output size. The renderer draws: translate(W/2,H/2) scale(G) translate(c.dx,c.dy)
+   * rotate(c.da) scale(c.scale) then the frame centred, in analysis units.
+   */
+  class Pipeline {
+    constructor(aw, ah, opts) {
+      opts = opts || {};
+      this.aw = aw; this.ah = ah;
+      this.est = new MotionEstimator(aw, ah);
+      this.smoother = new TrajectorySmoother({ w: aw, h: ah, margin: 0.1 });
+      this.tracker = new TargetTracker(aw, ah);
+      this.setMode(opts.mode || 'smooth');
+      this.c = { dx: 0, dy: 0, da: 0, scale: 1 };
+      this.lockPt = null; this.atEdge = false; this.gray = null;
+    }
+    setMode(m) { this.mode = m; this.smoother.set({ mode: m === 'smooth' ? 'smooth' : 'lock' }); if (m !== 'target') this.unlock(); }
+    get targetState() { return this.tracker.state; }
+    _lims(G, W, H, c) {
+      const s = c ? c.scale : 1, sa = c ? Math.abs(Math.sin(c.da)) : 0;
+      return {
+        x: Math.max(0, s * this.aw / 2 - W / (2 * G) - sa * s * this.ah / 2),
+        y: Math.max(0, s * this.ah / 2 - H / (2 * G) - sa * s * this.aw / 2),
+      };
+    }
+    step(gray, geom, enabled) {
+      this.gray = gray; this.G = geom.G; this.W = geom.W; this.H = geom.H;
+      const zoom = geom.G * this.aw / geom.W;                // total magnification vs. fit-to-output
+      this.smoother.set({ margin: Math.max(0.01, (1 - 1 / Math.max(zoom, 1.0001)) / 2) });
+      const m = this.est.process(gray);
+      let c = this.smoother.update(m, this._lims(geom.G, geom.W, geom.H));
+      this.atEdge = false;
+      if (this.tracker.state !== 'idle') {
+        this.tracker.update(gray, m);
+        const tc = targetCorrection(this.tracker.x - this.aw / 2, this.tracker.y - this.ah / 2, this.lockPt.x, this.lockPt.y, c, this._lims(geom.G, geom.W, geom.H, c));
+        c.dx = tc.dx; c.dy = tc.dy; this.atEdge = tc.atEdge;
+        const r = this.smoother.raw, s = this.smoother.sm; s[0] = r[0] + c.dx; s[1] = r[1] + c.dy;   // seamless unlock
+      } else {
+        const L = this._lims(geom.G, geom.W, geom.H, c);
+        c.dx = Math.max(-L.x, Math.min(L.x, c.dx)); c.dy = Math.max(-L.y, Math.min(L.y, c.dy));
+      }
+      if (!enabled) c = { dx: 0, dy: 0, da: 0, scale: 1 };
+      this.c = c; this.m = m;
+      return c;
+    }
+    /** output pixel -> analysis pixel in the current frame */
+    screenToFrame(sx, sy) {
+      const c = this.c, Lx = (sx - this.W / 2) / this.G - c.dx, Ly = (sy - this.H / 2) / this.G - c.dy;
+      const a = Math.cos(-c.da) / c.scale, b = Math.sin(-c.da) / c.scale;
+      return { x: a * Lx - b * Ly + this.aw / 2, y: b * Lx + a * Ly + this.ah / 2 };
+    }
+    /** analysis pixel in current frame -> output pixel */
+    frameToScreen(x, y) {
+      const c = this.c, a = c.scale * Math.cos(c.da), b = c.scale * Math.sin(c.da), px = x - this.aw / 2, py = y - this.ah / 2;
+      return { x: this.W / 2 + this.G * (a * px - b * py + c.dx), y: this.H / 2 + this.G * (b * px + a * py + c.dy) };
+    }
+    /** Lock on the target at analysis pixel (x,y) of the current frame; it stays where it is on screen now. */
+    lockAtFrame(x, y) {
+      if (!this.gray || !this.tracker.lock(this.gray, x, y)) return false;
+      const s = this.frameToScreen(this.tracker.x, this.tracker.y);
+      this.lockPt = { x: (s.x - this.W / 2) / this.G, y: (s.y - this.H / 2) / this.G };
+      if (this.mode !== 'target') { this.mode = 'target'; this.smoother.set({ mode: 'lock' }); }
+      return true;
+    }
+    lockAtScreen(sx, sy) { const p = this.screenToFrame(sx, sy); return this.lockAtFrame(p.x, p.y); }
+    unlock() { this.tracker.unlock(); this.lockPt = null; this.atEdge = false; }
+  }
+
+  const api = { Pipeline, toGray, downsample2, detectPoints, trackPoint, buildPyramid, ransacSimilarity, MotionEstimator, TrajectorySmoother, TargetTracker, targetCorrection };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SteadyCamCore = api;
 })(typeof self !== 'undefined' ? self : this);
-/*! SteadyCam SDK — drop-in stabilizer for any web app that uses the camera.
- *  Usage:
- *    const cam = new SteadyCam(videoOrCanvas, { mode: 'smooth' | 'lock', crop: 0.1 });
- *    cam.start();                     // draws stabilized frames into cam.canvas
- *    const stream = cam.captureStream(30); // MediaStream for MediaRecorder / WebRTC
+/*! SteadyCam SDK v2 — live, in-camera stabilization for any web app that uses the camera.
+ *
+ *  1) One line, every camera feature on the page gets stabilized video:
+ *       SteadyCam.install({ mode: 'smooth' });       // patches getUserMedia
+ *  2) Stabilize a stream you already have (recording, WebRTC, live streaming):
+ *       const { stream, cam } = await SteadyCam.stabilizeStream(cameraStream);
+ *  3) Full control:
+ *       const cam = new SteadyCam(videoEl, { mode: 'target', output: 1080 });
+ *       cam.start(); cam.lockAtScreen(x, y); cam.setZoom(2);
+ *       const rec = new SteadyCam.Recorder(cam.captureStream(30), cam); rec.start(); const blob = await rec.stop();
+ *
+ *  Modes: 'smooth' (keeps intentional pans), 'lock' (tripod: holds framing and size),
+ *         'target' (lock-on: keeps the tapped subject fixed on screen while the phone moves).
  */
 (function (root) {
   'use strict';
@@ -224,94 +420,165 @@
       opts = opts || {};
       this.source = source;
       this.canvas = opts.canvas || document.createElement('canvas');
-      this.ctx = this.canvas.getContext('2d');
+      this.ctx = this.canvas.getContext('2d', { alpha: false });
       this.small = document.createElement('canvas');
       this.sctx = this.small.getContext('2d', { willReadFrequently: true });
-      this.aw = 160;
+      this.aw = opts.analysisWidth || 160;
       this.enabled = opts.enabled !== false;
       this.mode = opts.mode || 'smooth';
-      this.crop = opts.crop != null ? opts.crop : 0.1;
-      this.maxWidth = opts.maxWidth || 1280;
+      this.crop = opts.crop != null ? opts.crop : 0.1;          // stabilization margin per side
+      this.zoom = 1;                                              // digital zoom on top
+      this.output = opts.output || 1080;                          // output short side, or 'source'
       this.onFrame = opts.onFrame || null;
-      this.smoother = new Core.TrajectorySmoother({ mode: this.mode, margin: this.crop });
-      this.stats = { rawRms: 0, stabRms: 0, reduction: 0, inliers: 0, points: 0, ms: 0 };
-      this._key = '';
-      this._raf = 0;
-      this._prevStab = [0, 0];
+      this.beforeFrame = opts.beforeFrame || null;
+      this.stats = { rawRms: 0, stabRms: 0, reduction: 0, inliers: 0, points: 0, ms: 0, rawPos: [0, 0], stabPos: [0, 0] };
+      this._key = ''; this._raf = 0; this._lastT = -1; this._prevStab = [0, 0];
     }
-    setMode(m) { this.mode = m; this.smoother.set({ mode: m }); }
-    setCrop(c) { this.crop = c; this.smoother.set({ margin: c }); }
+    setSource(el) { this.source = el; this._key = ''; this._lastT = -1; }
+    setMode(m) { this.mode = m; if (this.pipe) this.pipe.setMode(m); }
+    setCrop(c) { this.crop = c; }
+    setZoom(z) { this.zoom = Math.max(1, Math.min(8, z)); }
     setEnabled(on) { this.enabled = on; }
-    reset() { this._key = ''; }
-    _size() {
-      const s = this.source;
-      return s.videoWidth != null ? [s.videoWidth, s.videoHeight] : [s.width, s.height];
+    setOutput(o) { this.output = o; this._key = ''; }
+    get targetState() { return this.pipe ? this.pipe.targetState : 'idle'; }
+    get atEdge() { return this.pipe ? this.pipe.atEdge : false; }
+    /** Lock on whatever is at this output-canvas pixel. Returns false on a featureless spot. */
+    lockAtScreen(x, y) { if (!this.pipe) return false; const ok = this.pipe.lockAtScreen(x, y); if (ok) this.mode = 'target'; return ok; }
+    /** Lock on a source-video pixel. */
+    lockAtSource(x, y) { if (!this.pipe) return false; const k = this.aw / this._sw; const ok = this.pipe.lockAtFrame(x * k, y * k); if (ok) this.mode = 'target'; return ok; }
+    unlock() { if (this.pipe) this.pipe.unlock(); }
+    /** Output pixel where the locked target sits now (for drawing a reticle), or null. */
+    lockScreenPoint() { const p = this.pipe; if (!p || !p.lockPt) return null; return { x: p.W / 2 + p.G * p.lockPt.x, y: p.H / 2 + p.G * p.lockPt.y }; }
+    _size() { const s = this.source; return s && s.videoWidth != null ? [s.videoWidth, s.videoHeight] : s ? [s.width, s.height] : [0, 0]; }
+    _setup(sw, sh) {
+      const short = Math.min(sw, sh), target = this.output === 'source' ? short : Math.min(short, this.output);
+      const f = target / short;
+      this.canvas.width = Math.round(sw * f / 2) * 2; this.canvas.height = Math.round(sh * f / 2) * 2;
+      this.ah = Math.max(48, Math.round(this.aw * sh / sw / 2) * 2);
+      this.small.width = this.aw; this.small.height = this.ah;
+      this.gray = new Float32Array(this.aw * this.ah);
+      const keep = this.pipe && this.pipe.mode;
+      this.pipe = new Core.Pipeline(this.aw, this.ah, { mode: this.mode === 'target' ? 'target' : this.mode });
+      this._sw = sw; this._sh = sh; this._prevStab = [0, 0];
+      return keep;
     }
     frame() {
+      if (this.beforeFrame) this.beforeFrame();
       const [sw, sh] = this._size();
       if (!sw || !sh) return null;
-      if (this.source.readyState != null && this.source.readyState < 2) return null;
-      const key = sw + 'x' + sh;
-      if (key !== this._key) {
-        this._key = key;
-        const ow = Math.min(sw, this.maxWidth);
-        this.canvas.width = ow; this.canvas.height = Math.round(ow * sh / sw);
-        this.ah = Math.max(48, Math.round(this.aw * sh / sw / 2) * 2);
-        this.small.width = this.aw; this.small.height = this.ah;
-        this.gray = new Float32Array(this.aw * this.ah);
-        this.est = new Core.MotionEstimator(this.aw, this.ah);
-        this.smoother.set({ w: this.aw, h: this.ah });
-        this.smoother.reset();
-        this._prevStab = [0, 0];
+      const s = this.source;
+      if (s.readyState != null) {
+        if (s.readyState < 2) return null;
+        if (s.currentTime === this._lastT && !s.srcObject) return null;   // file video paused / same frame
+        this._lastT = s.currentTime;
       }
+      const key = sw + 'x' + sh + ':' + this.output;
+      if (key !== this._key) { this._key = key; this._setup(sw, sh); }
+      const W = this.canvas.width, H = this.canvas.height;
       const t0 = performance.now();
-      this.sctx.drawImage(this.source, 0, 0, this.aw, this.ah);
+      this.sctx.drawImage(s, 0, 0, this.aw, this.ah);
       Core.toGray(this.sctx.getImageData(0, 0, this.aw, this.ah).data, this.aw, this.ah, this.gray);
-      const m = this.est.process(this.gray);
-      const c = this.smoother.update(m);
+      const cropZoom = this.enabled ? 1 / (1 - 2 * this.crop) : 1;
+      const G = cropZoom * this.zoom * W / this.aw;
+      if (this.pipe.mode !== this.mode) this.pipe.setMode(this.mode);   // 'target' with nothing locked behaves as tripod
+      const c = this.pipe.step(this.gray, { G, W, H }, this.enabled);
+      const m = this.pipe.m;
       const ms = performance.now() - t0;
 
-      // live shake meter (output pixels, exponential RMS of frame-to-frame motion)
-      const k = this.canvas.width / this.aw;
-      const r = this.smoother.raw;
+      // live shake meter in output pixels
+      const k = G / cropZoom / this.zoom, r = this.pipe.smoother.raw;
       const sx = r[0] + c.dx, sy = r[1] + c.dy;
-      const rawD = Math.hypot(m.dx, m.dy) * k;
-      const stD = Math.hypot(sx - this._prevStab[0], sy - this._prevStab[1]) * k;
+      const rawD = Math.hypot(m.dx, m.dy) * k, stD = Math.hypot(sx - this._prevStab[0], sy - this._prevStab[1]) * k;
       this._prevStab = [sx, sy];
       const st = this.stats, a = 0.06;
       st.rawRms = Math.sqrt((1 - a) * st.rawRms ** 2 + a * rawD * rawD);
       st.stabRms = Math.sqrt((1 - a) * st.stabRms ** 2 + a * stD * stD);
       st.reduction = st.rawRms > 0.3 ? Math.max(0, 1 - st.stabRms / st.rawRms) : 0;
-      st.inliers = this.est.last.inliers; st.points = this.est.last.total;
-      st.ms = (1 - a) * st.ms + a * ms;
-      st.rawPos = [r[0] * k, r[1] * k]; st.stabPos = [sx * k, sy * k];
+      st.inliers = this.pipe.est.last.inliers; st.points = this.pipe.est.last.total;
+      st.ms = (1 - a) * st.ms + a * ms; st.rawPos = [r[0] * k, r[1] * k]; st.stabPos = [sx * k, sy * k];
+      st.target = this.pipe.targetState; st.edge = this.pipe.atEdge; st.score = this.pipe.tracker.score;
 
-      const ctx = this.ctx, W = this.canvas.width, H = this.canvas.height, f = W / sw;
+      // one resample, straight from the full-resolution camera frame
+      const ctx = this.ctx, kSrc = sw / this.aw;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
       ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
-      if (this.enabled) {
-        const zoom = 1 / (1 - 2 * this.crop);
-        const kSrc = sw / this.aw;
-        ctx.translate(W / 2, H / 2);
-        ctx.scale(zoom * f, zoom * f);
-        ctx.translate(c.dx * kSrc, c.dy * kSrc);
-        ctx.rotate(c.da);
-        ctx.scale(c.scale, c.scale);
-        ctx.drawImage(this.source, -sw / 2, -sh / 2, sw, sh);
-      } else {
-        ctx.drawImage(this.source, 0, 0, W, H);
-      }
-      if (this.onFrame) this.onFrame(this.stats, c);
+      ctx.translate(W / 2, H / 2);
+      ctx.scale(G / kSrc, G / kSrc);
+      ctx.translate(c.dx * kSrc, c.dy * kSrc);
+      ctx.rotate(c.da);
+      ctx.scale(c.scale, c.scale);
+      ctx.drawImage(s, -sw / 2, -sh / 2, sw, sh);
+      if (this.onFrame) this.onFrame(st, c);
       return c;
     }
     start() {
-      const loop = () => { this._raf = requestAnimationFrame(loop); this.frame(); };
-      cancelAnimationFrame(this._raf); this._raf = requestAnimationFrame(loop);
+      cancelAnimationFrame(this._raf);
+      const loop = () => { this._raf = requestAnimationFrame(loop); try { this.frame(); } catch (e) { console.error('SteadyCam frame', e); } };
+      this._raf = requestAnimationFrame(loop);
       return this;
     }
     stop() { cancelAnimationFrame(this._raf); this._raf = 0; }
     captureStream(fps) { return this.canvas.captureStream(fps || 30); }
+
+    /** Wrap a camera MediaStream; returns a stabilized MediaStream (audio passed through untouched). */
+    static async stabilizeStream(input, opts) {
+      opts = opts || {};
+      const v = document.createElement('video');
+      v.muted = true; v.playsInline = true; v.setAttribute('playsinline', ''); v.srcObject = input;
+      Object.assign(v.style, { position: 'fixed', width: '2px', height: '2px', opacity: '0.01', pointerEvents: 'none', left: '0', top: '0' });
+      document.body.appendChild(v);                                // iOS only decodes attached videos reliably
+      await v.play().catch(() => {});
+      const vt = input.getVideoTracks()[0], fps = (vt && vt.getSettings().frameRate) || opts.fps || 30;
+      const cam = new SteadyCam(v, opts).start();
+      const out = cam.captureStream(Math.round(fps));
+      input.getAudioTracks().forEach(t => out.addTrack(t));
+      const ot = out.getVideoTracks()[0], origStop = ot.stop.bind(ot);
+      ot.stop = () => { origStop(); cam.stop(); input.getTracks().forEach(t => t.stop()); v.remove(); };
+      ot.steadycam = cam; ot.cameraTrack = vt;                     // zoom/torch stay reachable via cameraTrack
+      return { stream: out, cam, cameraTrack: vt };
+    }
+
+    /** One-line plugin: every getUserMedia video stream on this page comes back stabilized. */
+    static install(opts) {
+      const md = navigator.mediaDevices;
+      if (!md || md.__steadycam) return;
+      const orig = md.getUserMedia.bind(md);
+      md.getUserMedia = async (constraints) => {
+        const s = await orig(constraints);
+        if (!constraints || !constraints.video || (opts && opts.enabled === false)) return s;
+        return (await SteadyCam.stabilizeStream(s, opts)).stream;
+      };
+      md.__steadycam = true;
+    }
   }
 
+  /** Recorder: high-bitrate MP4 (Safari) or WebM, resolves a Blob on stop. */
+  class Recorder {
+    constructor(stream, cam, opts) {
+      opts = opts || {};
+      this.stream = stream;
+      const types = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp9', 'video/webm'];
+      this.type = types.find(t => root.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
+      const px = cam ? cam.canvas.width * cam.canvas.height : 1920 * 1080;
+      this.bitrate = opts.bitrate || Math.min(50e6, Math.max(8e6, px * 30 * 0.2));   // ~12 Mbps @1080p30
+    }
+    get extension() { return (this.rec && this.rec.mimeType || this.type).includes('mp4') ? 'mp4' : 'webm'; }
+    start() {
+      this.chunks = [];
+      const o = { videoBitsPerSecond: this.bitrate, audioBitsPerSecond: 160000 };
+      if (this.type) o.mimeType = this.type;
+      this.rec = new MediaRecorder(this.stream, o);
+      this.rec.ondataavailable = (e) => { if (e.data && e.data.size) this.chunks.push(e.data); };
+      this.done = new Promise(res => { this.rec.onstop = () => res(new Blob(this.chunks, { type: this.rec.mimeType || this.type || 'video/webm' })); });
+      this.rec.start(500);
+      this.startedAt = Date.now();
+    }
+    get recording() { return !!this.rec && this.rec.state === 'recording'; }
+    stop() { if (this.rec && this.rec.state !== 'inactive') this.rec.stop(); return this.done; }
+  }
+
+  SteadyCam.Recorder = Recorder;
+  SteadyCam.version = '2.0.0';
   root.SteadyCam = SteadyCam;
 })(typeof self !== 'undefined' ? self : this);

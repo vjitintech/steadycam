@@ -5,18 +5,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-/* Layout: one-column camera instrument — viewfinder first, controls as a hardware-style deck below, SDK notes last */
+/* Layout: camera instrument — live viewfinder with lock-on reticle first, hardware-style control deck below, SDK notes last */
 :root {
-  --bg: #11130f;        /* camera body, olive-black */
-  --panel: #1a1d17;
-  --line: #2d3127;
-  --fg: #e9e6dc;
-  --muted: #9a9a8a;
-  --accent: #f0a63a;    /* sodium amber: focus-confirm */
-  --accent-ink: #1a1206;
-  --good: #7fc28a;
-  --warn: #e06a4d;
-  --raw: #7c8aa6;
+  --bg: #11130f; --panel: #1a1d17; --line: #2d3127; --fg: #e9e6dc; --muted: #9a9a8a;
+  --accent: #f0a63a; --accent-ink: #1a1206; --good: #7fc28a; --warn: #e06a4d; --raw: #7c8aa6;
   --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
   --body: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
@@ -32,87 +24,122 @@
 * { box-sizing: border-box }
 body { background: var(--bg); color: var(--fg); font: 15px/1.5 var(--body);
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 14px 40px }
-.wrap { max-width: 980px; margin: 0 auto; display: grid; gap: 16px }
-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap }
+.wrap { max-width: 980px; margin: 0 auto; display: grid; gap: 14px }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap }
 h1 { font: 700 34px/1 var(--display); letter-spacing: .02em; margin: 0; text-transform: uppercase }
-h1 b { color: var(--accent) }
+h1 b { color: var(--accent) } h1 sup { font: 500 12px var(--mono); color: var(--muted); margin-left: 4px }
 .tag { font: 500 12px var(--mono); color: var(--muted); letter-spacing: .06em; text-transform: uppercase }
 .pill { font: 500 12px var(--mono); padding: 4px 10px; border-radius: 99px; border: 1px solid var(--line); display: inline-flex; gap: 6px; align-items: center }
 .pill i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted) }
 .pill.live i { background: var(--good) } .pill.rec i { background: var(--warn); animation: blink 1s infinite }
 @keyframes blink { 50% { opacity: .2 } }
 
-.finder { position: relative; background: #000; border-radius: 6px; overflow: hidden; aspect-ratio: 16/9; max-width: 100%; border: 1px solid var(--line) }
-.finder canvas#out { width: 100%; height: 100%; object-fit: contain; display: block }
-.pip { position: absolute; left: 10px; bottom: 10px; width: 28%; max-width: 220px; border: 1px solid rgba(255,255,255,.35); border-radius: 4px; overflow: hidden; background: #000 }
+.stage { display: grid; justify-items: center }
+.finder { position: relative; background: #000; border-radius: 6px; overflow: hidden; width: 100%; aspect-ratio: 16/9; max-width: 100%; border: 1px solid var(--line); touch-action: none; user-select: none; -webkit-user-select: none; cursor: crosshair }
+.finder canvas#out { width: 100%; height: 100%; display: block }
+.pip { position: absolute; left: 10px; bottom: 10px; width: 26%; max-width: 200px; border: 1px solid rgba(255,255,255,.35); border-radius: 4px; overflow: hidden; background: #000; pointer-events: none }
 .pip canvas { width: 100%; display: block }
-.pip span, .corner { position: absolute; font: 500 11px var(--mono); color: #fff; background: rgba(0,0,0,.55); padding: 2px 6px; letter-spacing: .08em }
-.pip span { left: 0; top: 0 }
-.corner.tl { top: 10px; left: 10px } .corner.tr { top: 10px; right: 10px; color: #f0a63a }
-.frame-marks { position: absolute; inset: 12%; pointer-events: none; border: 1px solid rgba(240,166,58,.0) }
-.frame-marks::before, .frame-marks::after { content: ""; position: absolute; width: 22px; height: 22px; border: 2px solid rgba(240,166,58,.85) }
-.frame-marks::before { left: 0; top: 0; border-right: 0; border-bottom: 0 }
-.frame-marks::after { right: 0; bottom: 0; border-left: 0; border-top: 0 }
-.msg { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; background: rgba(0,0,0,.78); color: #eee; font-size: 14px }
+.hud { position: absolute; font: 500 11px var(--mono); color: #fff; background: rgba(0,0,0,.55); padding: 2px 6px; letter-spacing: .06em; pointer-events: none; white-space: nowrap }
+.pip .hud { left: 0; top: 0 }
+.tl { top: 10px; left: 10px } .tr { top: 10px; right: 10px; color: #f0a63a } .br { right: 10px; bottom: 10px } .tc { top: 10px; left: 50%; transform: translateX(-50%); color: #ff8a70 }
+.reticle { position: absolute; width: 64px; height: 64px; margin: -32px 0 0 -32px; pointer-events: none; transition: border-color .15s }
+.reticle::before, .reticle::after { content: ""; position: absolute; inset: 0; border: 2px solid #f0a63a; clip-path: polygon(0 0,30% 0,30% 2px,2px 2px,2px 30%,0 30%, 0 70%,2px 70%,2px calc(100% - 2px),30% calc(100% - 2px),30% 100%,0 100%, 100% 100%,70% 100%,70% calc(100% - 2px),calc(100% - 2px) calc(100% - 2px),calc(100% - 2px) 70%,100% 70%, 100% 30%,calc(100% - 2px) 30%,calc(100% - 2px) 2px,70% 2px,70% 0,100% 0) }
+.reticle::after { inset: 28px; border-radius: 50%; clip-path: none; border-width: 2px; background: #f0a63a }
+.reticle.edge::before, .reticle.edge::after { border-color: #ffd36a } .reticle.edge::after { background: #ffd36a }
+.reticle.lost::before, .reticle.lost::after { border-color: #ff6a4d; border-style: dashed } .reticle.lost::after { background: #ff6a4d }
+.reticle span { position: absolute; top: 68px; left: 50%; transform: translateX(-50%); font: 600 11px var(--mono); color: #000; background: #f0a63a; padding: 1px 6px; letter-spacing: .08em }
+.reticle.edge span { background: #ffd36a } .reticle.lost span { background: #ff6a4d; color: #fff }
+.focus { position: absolute; width: 56px; height: 56px; margin: -28px 0 0 -28px; border: 1.5px solid #fff; border-radius: 4px; pointer-events: none; opacity: 0; transition: opacity .4s }
+.focus.on { opacity: 1; transition: none }
+.msg { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; background: rgba(0,0,0,.8); color: #eee; font-size: 14px }
 .msg p { max-width: 46ch; margin: 0 }
+.tip { font-size: 13px; color: var(--muted); text-align: center }
 
 .meter { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 6px; overflow: hidden }
 .meter div { background: var(--panel); padding: 10px 12px; min-width: 0 }
 .meter small { display: block; font: 500 11px var(--mono); color: var(--muted); letter-spacing: .08em; text-transform: uppercase }
-.meter strong { font: 600 26px/1.15 var(--display); font-variant-numeric: tabular-nums }
+.meter strong { font: 600 26px/1.15 var(--display); font-variant-numeric: tabular-nums; overflow-wrap: anywhere }
 .meter .big strong { color: var(--accent) }
-#spark { width: 100%; height: 70px; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 6px }
+#spark { width: 100%; height: 64px; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 6px }
 .legend { display: flex; gap: 14px; font: 12px var(--mono); color: var(--muted); flex-wrap: wrap }
 .legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 6px }
 
-.deck { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px }
-.ctl { display: grid; gap: 6px; min-width: 0 }
-.ctl > label, .ctl > .lbl { font: 500 11px var(--mono); color: var(--muted); letter-spacing: .08em; text-transform: uppercase }
+.recbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap }
+.recbtn { width: 64px; height: 64px; border-radius: 50%; border: 3px solid var(--fg); background: transparent; padding: 0; display: grid; place-items: center; cursor: pointer; flex: none }
+.recbtn i { width: 46px; height: 46px; border-radius: 50%; background: var(--warn); transition: all .2s }
+.recbtn[aria-pressed="true"] i { width: 24px; height: 24px; border-radius: 4px }
+.recinfo { display: grid; gap: 4px; min-width: 0; flex: 1 }
+.recinfo strong { font: 600 20px var(--display); letter-spacing: .03em; text-transform: uppercase }
+.status { font: 13px var(--mono); color: var(--muted); min-height: 1.4em; overflow-wrap: anywhere }
+
+.deck { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px }
+.ctl { display: grid; gap: 6px; min-width: 0; align-content: start }
+.ctl > label, .ctl > .lbl { font: 500 11px var(--mono); color: var(--muted); letter-spacing: .08em; text-transform: uppercase; display: flex; justify-content: space-between; gap: 8px }
 .seg { display: flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden }
 .seg button { flex: 1; min-width: 0 }
 button { font: 600 15px var(--display); letter-spacing: .05em; text-transform: uppercase; color: var(--fg); background: transparent; border: 0; padding: 10px 8px; cursor: pointer }
+button:disabled { opacity: .4; cursor: not-allowed }
 .seg button + button { border-left: 1px solid var(--line) }
 .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink) }
-button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+button:focus-visible, input:focus-visible, .finder:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
 .solid { border: 1px solid var(--line); border-radius: 5px }
-.rec-btn { background: var(--warn); color: #fff; border-radius: 5px; border: 0 }
-.rec-btn[aria-pressed="true"] { background: var(--fg); color: var(--bg) }
+.solid[aria-pressed="true"] { border-color: var(--accent); color: var(--accent) }
 .row { display: flex; gap: 8px; flex-wrap: wrap } .row > * { flex: 1 }
 input[type=range] { width: 100%; accent-color: var(--accent) }
 .hint { font-size: 13px; color: var(--muted) }
-.status { font: 13px var(--mono); color: var(--muted); min-height: 1.4em }
+.check { display: flex; gap: 8px; align-items: center; font-size: 14px }
+.check input { width: 18px; height: 18px; accent-color: var(--accent) }
 
 section.sdk { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 16px }
 section.sdk h2 { font: 700 22px var(--display); text-transform: uppercase; letter-spacing: .03em; margin: 0 }
 section.sdk p { margin: 0; max-width: 68ch }
 pre { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; overflow-x: auto; font: 13px/1.55 var(--mono) }
-@media (max-width: 560px) { .meter { grid-template-columns: repeat(2, minmax(0, 1fr)) } h1 { font-size: 28px } }
-@media (prefers-reduced-motion: reduce) { .pill.rec i { animation: none } }
+@media (max-width: 560px) { .meter { grid-template-columns: repeat(2, minmax(0, 1fr)) } h1 { font-size: 28px } .reticle { width: 52px; height: 52px; margin: -26px 0 0 -26px } .reticle::after { inset: 22px } .reticle span { top: 56px } }
+@media (prefers-reduced-motion: reduce) { .pill.rec i { animation: none } .recbtn i { transition: none } }
 </style>
 
 <div class="wrap">
   <header>
-    <div><h1>Steady<b>Cam</b></h1><div class="tag">Software stabilizer · no gimbal · no stand</div></div>
+    <div><h1>Steady<b>Cam</b><sup>v2</sup></h1><div class="tag">Live stabilizer · target lock-on · no gimbal, no stand</div></div>
     <span class="pill" id="state"><i></i><span id="stateText">Starting</span></span>
   </header>
 
-  <div class="finder" id="finder">
-    <canvas id="out" aria-label="Stabilized video"></canvas>
-    <div class="frame-marks"></div>
-    <div class="pip"><canvas id="raw" aria-label="Raw, unstabilized video"></canvas><span>RAW</span></div>
-    <span class="corner tl" id="srcLabel">DEMO · HANDHELD</span>
-    <span class="corner tr" id="stabLabel">STAB ON</span>
-    <div class="msg" id="msg" hidden><p id="msgText"></p></div>
+  <div class="stage">
+    <div class="finder" id="finder" tabindex="0" aria-label="Viewfinder. Tap to lock on a subject.">
+      <canvas id="out" aria-label="Stabilized live video"></canvas>
+      <div class="pip"><canvas id="raw" aria-label="Raw camera feed"></canvas><span class="hud">RAW</span></div>
+      <span class="hud tl" id="srcLabel">DEMO</span>
+      <span class="hud tc" id="recLabel" hidden>● REC 00:00</span>
+      <span class="hud tr" id="stabLabel">SMOOTH</span>
+      <span class="hud br" id="zoomLabel">1.0×</span>
+      <div class="reticle" id="reticle" hidden><span id="reticleText">LOCKED</span></div>
+      <div class="focus" id="focusBox"></div>
+      <div class="msg" id="msg" hidden><p id="msgText"></p></div>
+    </div>
+  </div>
+  <div class="tip" id="tip">Target lock: tap any subject in the viewfinder. Pinch or use the slider to zoom.</div>
+
+  <div class="recbar">
+    <button class="recbtn" id="rec" aria-pressed="false" aria-label="Start recording"><i></i></button>
+    <div class="recinfo">
+      <strong id="recTitle">Ready to record</strong>
+      <div class="status" id="recStatus">Records the stabilized live view at full quality.</div>
+    </div>
+    <div class="row" style="flex:0 1 auto">
+      <button class="solid" id="unlock" hidden>Unlock target</button>
+      <button class="solid" id="saveAgain" hidden>Save clip</button>
+      <button class="solid" id="share" hidden>Save to Photos</button>
+    </div>
   </div>
 
-  <div class="meter" aria-live="polite">
+  <div class="meter" aria-live="off">
     <div class="big"><small>Shake removed</small><strong id="mRed">–</strong></div>
     <div><small>Raw jitter</small><strong id="mRaw">–</strong></div>
     <div><small>Output jitter</small><strong id="mOut">–</strong></div>
-    <div><small>Tracked points</small><strong id="mPts">–</strong></div>
+    <div><small>Target</small><strong id="mTgt">–</strong></div>
   </div>
   <canvas id="spark" aria-label="Horizontal camera path: raw versus stabilized"></canvas>
-  <div class="legend"><span><i style="background:var(--raw)"></i>Raw camera path</span><span><i style="background:var(--accent)"></i>Stabilized path</span><span id="mMs"></span></div>
+  <div class="legend"><span><i style="background:var(--raw)"></i>Raw camera path</span><span><i style="background:var(--accent)"></i>Stabilized path</span><span id="mInfo"></span></div>
 
   <div class="deck">
     <div class="ctl"><span class="lbl">Source</span>
@@ -122,39 +149,55 @@ pre { margin: 0; background: var(--panel); border: 1px solid var(--line); border
         <button id="srcFile" aria-pressed="false">Video file</button>
       </div>
       <input type="file" id="file" accept="video/*" hidden>
+      <div class="row"><button class="solid" id="flip" disabled>Flip camera</button><button class="solid" id="torch" disabled aria-pressed="false">Torch</button></div>
     </div>
-    <div class="ctl"><span class="lbl">Mode</span>
+    <div class="ctl"><span class="lbl">Stabilization</span>
       <div class="seg" id="modeSeg">
         <button id="modeSmooth" aria-pressed="true">Smooth</button>
-        <button id="modeLock" aria-pressed="false">Tripod lock</button>
+        <button id="modeLock" aria-pressed="false">Tripod</button>
+        <button id="modeTarget" aria-pressed="false">Target lock</button>
       </div>
-      <span class="hint" id="modeHint">Removes shake, keeps your intentional pans.</span>
+      <span class="hint" id="modeHint">Removes shake and keeps your intentional pans.</span>
+    </div>
+    <div class="ctl"><label for="zoom">Zoom <span id="zoomVal">1.0×</span></label>
+      <input type="range" id="zoom" min="1" max="4" step="0.05" value="1">
+      <span class="hint" id="zoomHint">Zooming in also gives the lock more room to move.</span>
     </div>
     <div class="ctl"><label for="crop">Stabilization margin <span id="cropVal">10%</span></label>
       <input type="range" id="crop" min="4" max="18" value="10">
-      <span class="hint">More margin absorbs bigger shakes; crops more.</span>
+      <span class="hint">A bigger margin absorbs bigger moves. The camera records in 4K where it can, so the crop doesn't reduce 1080p output detail.</span>
     </div>
-    <div class="ctl"><span class="lbl">Capture</span>
-      <div class="row">
-        <button class="solid" id="toggle" aria-pressed="true">Stab on</button>
-        <button class="rec-btn" id="rec" aria-pressed="false">● Record</button>
+    <div class="ctl"><span class="lbl">Output quality</span>
+      <div class="seg" id="qSeg">
+        <button data-q="720" aria-pressed="false">720p</button>
+        <button data-q="1080" aria-pressed="true">1080p</button>
+        <button data-q="2160" aria-pressed="false">4K</button>
       </div>
-      <div class="status" id="recStatus"></div>
+      <div class="seg" id="fpsSeg">
+        <button data-f="30" aria-pressed="true">30 fps</button>
+        <button data-f="60" aria-pressed="false">60 fps</button>
+      </div>
+    </div>
+    <div class="ctl"><span class="lbl">Options</span>
+      <label class="check"><input type="checkbox" id="stabOn" checked> Stabilizer on</label>
+      <label class="check"><input type="checkbox" id="autosave" checked> Auto-save when recording stops</label>
+      <label class="check"><input type="checkbox" id="mic" checked> Record sound</label>
     </div>
   </div>
 
   <section class="sdk">
-    <h2>Enable it in any camera app</h2>
-    <p>The same engine ships as a drop-in script. Point it at the app's camera <code>&lt;video&gt;</code>, and it returns a stabilized canvas and a <code>MediaStream</code> for recording, streaming or video calls.</p>
+    <h2>Plug it into any camera app</h2>
+    <p>Other web apps turn it on with one line. Every camera stream they open comes back stabilized, so their recording, streaming and video calls get it with no other changes.</p>
 <pre>&lt;script src="steadycam.js"&gt;&lt;/script&gt;
 &lt;script&gt;
-  const cam = new SteadyCam(videoEl, { mode: 'smooth', crop: 0.1 });
-  cam.start();                                  // stabilized frames → cam.canvas
-  document.body.append(cam.canvas);
-  const rec = new MediaRecorder(cam.captureStream(30));
-  cam.setMode('lock');                          // tripod-style framing hold
+  SteadyCam.install({ mode: 'smooth' });   // every getUserMedia video is now stabilized
+
+  // or wrap a stream yourself and keep control:
+  const { stream, cam } = await SteadyCam.stabilizeStream(cameraStream, { mode: 'target', output: 1080 });
+  cam.lockAtScreen(x, y);   cam.setZoom(2);   cam.unlock();
+  const rec = new SteadyCam.Recorder(stream, cam);  rec.start();  const clip = await rec.stop();
 &lt;/script&gt;</pre>
-    <p class="hint">Live camera needs the page opened directly in a mobile browser over HTTPS. Inside this preview, use Demo or Video file.</p>
+    <p class="hint">Live camera works when this page is opened directly in Safari or Chrome over HTTPS. Inside a preview, use Demo or Video file.</p>
     <div class="row" style="max-width:340px"><button class="solid" id="getApp">Save standalone app (.html)</button></div>
   </section>
 </div>
@@ -324,7 +367,7 @@ pre { margin: 0; background: var(--panel); border: 1px solid var(--line); border
     reset() { this.prev = null; }
     /** returns {dx,dy,da,dls} in analysis pixels (frame-centred), or identity if unreliable */
     process(gray) {
-      const pyr = buildPyramid(gray, this.w, this.h);
+      const pyr = buildPyramid(gray.slice(), this.w, this.h);   // own copy: callers reuse their buffer
       const prev = this.prev; this.prev = pyr;
       const ident = { dx: 0, dy: 0, da: 0, dls: 0, ok: false };
       if (!prev) return ident;
@@ -350,13 +393,14 @@ pre { margin: 0; background: var(--panel); border: 1px solid var(--line); border
       this.w = o.w || this.w || 160; this.h = o.h || this.h || 120;
     }
     reset() { this.raw = [0, 0, 0, 0]; this.sm = [0, 0, 0, 0]; }
-    update(m) {
+    /** m: frame motion; limXY (optional): exact translation headroom {x,y} in analysis px from the renderer */
+    update(m, limXY) {
       const r = this.raw, s = this.sm;
       r[0] += m.dx; r[1] += m.dy; r[2] += m.da; r[3] += m.dls;
       // smooth: low-pass (keeps intentional pans); lock: hold framing like a tripod, tiny drift-back
-      const a = this.mode === 'lock' ? [0.004, 0.004, 0.01, 0.01] : [0.07, 0.07, 0.08, 0.08];
+      const a = this.mode === 'smooth' ? [0.07, 0.07, 0.08, 0.08] : [0.004, 0.004, 0.01, 0.01];
       for (let i = 0; i < 4; i++) s[i] += a[i] * (r[i] - s[i]);
-      const lim = [this.margin * this.w, this.margin * this.h, 0.06, Math.log(1 + this.margin)];
+      const lim = [limXY ? limXY.x : this.margin * this.w, limXY ? limXY.y : this.margin * this.h, 0.06, Math.log(1 + this.margin)];
       const c = [0, 0, 0, 0];
       for (let i = 0; i < 4; i++) {
         let d = s[i] - r[i];
@@ -367,15 +411,210 @@ pre { margin: 0; background: var(--panel); border: 1px solid var(--line); border
     }
   }
 
-  const api = { toGray, downsample2, detectPoints, trackPoint, buildPyramid, ransacSimilarity, MotionEstimator, TrajectorySmoother };
+  /**
+   * Target lock-on ("homing") tracker.
+   * Each frame: predict where the locked target went using the measured camera motion
+   * (precise, from the whole frame) plus the target's own velocity, then confirm with a
+   * zero-mean NCC template search around the prediction, and fuse with an alpha-beta filter.
+   * If the target is briefly hidden it coasts on the prediction and re-acquires with a wider search.
+   */
+  class TargetTracker {
+    constructor(w, h, opts) {
+      opts = opts || {};
+      this.w = w; this.h = h;
+      this.r = opts.radius || Math.max(6, Math.round(w * 0.05));
+      this.search = opts.search || 10;
+      this.state = 'idle'; this.score = 0; this.lost = 0;
+    }
+    _stats(g, x, y) {
+      const r = this.r, w = this.w; let s = 0, s2 = 0;
+      for (let dy = -r; dy <= r; dy++) { let i = (y + dy) * w + x - r; for (let dx = -r; dx <= r; dx++, i++) { const v = g[i]; s += v; s2 += v * v; } }
+      const n = (2 * r + 1) ** 2, mu = s / n;
+      return [mu, Math.sqrt(Math.max(0, s2 / n - mu * mu))];
+    }
+    _patch(g, x, y) {
+      const r = this.r, w = this.w, [mu, sd] = this._stats(g, x, y), out = new Float32Array((2 * r + 1) ** 2);
+      let k = 0;
+      for (let dy = -r; dy <= r; dy++) { let i = (y + dy) * w + x - r; for (let dx = -r; dx <= r; dx++, i++) out[k++] = (g[i] - mu) / (sd || 1); }
+      return { p: out, sd };
+    }
+    _inside(x, y, pad) { const r = this.r + (pad || 0); return x >= r && y >= r && x < this.w - r && y < this.h - r; }
+    _ncc(g, x, y) {
+      const r = this.r, w = this.w, T = this.T, [mu, sd] = this._stats(g, x, y);
+      if (sd < 1e-3) return -1;
+      let s = 0, k = 0;
+      for (let dy = -r; dy <= r; dy++) { let i = (y + dy) * w + x - r; for (let dx = -r; dx <= r; dx++, i++) s += T[k++] * (g[i] - mu); }
+      return s / (T.length * sd);
+    }
+    /** Lock onto the feature at analysis pixel (x, y). Returns false on a featureless spot. */
+    lock(g, x, y) {
+      let ix = Math.round(x), iy = Math.round(y);
+      if (!this._inside(ix, iy, 1)) return false;
+      // snap to the most trackable spot (strongest 2-D texture) within a few pixels of the tap
+      let bestS = -1, bx = ix, by = iy, w = this.w, r = this.r;
+      for (let yy = iy - 4; yy <= iy + 4; yy++) for (let xx = ix - 4; xx <= ix + 4; xx++) {
+        if (!this._inside(xx, yy, 2)) continue;
+        let sxx = 0, syy = 0, sxy = 0;
+        for (let dy = -r; dy <= r; dy += 2) for (let dx = -r; dx <= r; dx += 2) {
+          const i = (yy + dy) * w + xx + dx, gx = (g[i + 1] - g[i - 1]) * 0.5, gy = (g[i + w] - g[i - w]) * 0.5;
+          sxx += gx * gx; syy += gy * gy; sxy += gx * gy;
+        }
+        const tr = (sxx + syy) / 2, d = (sxx - syy) / 2, s = tr - Math.sqrt(d * d + sxy * sxy);
+        const pen = s * (1 - 0.03 * Math.hypot(xx - ix, yy - iy));          // prefer the tapped spot
+        if (pen > bestS) { bestS = pen; bx = xx; by = yy; }
+      }
+      ix = bx; iy = by;
+      const { p, sd } = this._patch(g, ix, iy);
+      if (sd < 3) return false;
+      this.T = p; this.x = ix; this.y = iy; this.vx = 0; this.vy = 0;
+      this.state = 'locked'; this.lost = 0; this.score = 1;
+      return true;
+    }
+    unlock() { this.state = 'idle'; }
+    /** g: current gray frame, m: camera motion prev->cur ({dx,dy,da,dls}, frame-centred) */
+    update(g, m) {
+      if (this.state === 'idle') return this;
+      const cx = this.w / 2, cy = this.h / 2, s = Math.exp(m.dls || 0);
+      const a = s * Math.cos(m.da || 0), b = s * Math.sin(m.da || 0);
+      const px = this.x - cx, py = this.y - cy;
+      const qx = a * px - b * py + (m.dx || 0) + cx + this.vx, qy = b * px + a * py + (m.dy || 0) + cy + this.vy;
+      const R = this.state === 'lost' ? this.search * 2 : this.search;
+      const gx = Math.round(qx), gy = Math.round(qy);
+      let best = -2, bx = gx, by = gy;
+      const sc = new Map();
+      for (let y = gy - R; y <= gy + R; y++) for (let x = gx - R; x <= gx + R; x++) {
+        if (!this._inside(x, y, 1)) continue;
+        const v = this._ncc(g, x, y); sc.set(y * this.w + x, v);
+        if (v > best) { best = v; bx = x; by = y; }
+      }
+      this.score = best;
+      if (best > 0.55) {
+        // sub-pixel peak
+        const at = (x, y) => { const k = y * this.w + x; return sc.has(k) ? sc.get(k) : this._ncc(g, x, y); };
+        let ox = 0, oy = 0;
+        const l = at(bx - 1, by), rr = at(bx + 1, by), u = at(bx, by - 1), d = at(bx, by + 1);
+        const dxn = l - 2 * best + rr, dyn = u - 2 * best + d;
+        if (dxn < 0) ox = Math.max(-0.5, Math.min(0.5, 0.5 * (l - rr) / dxn));
+        if (dyn < 0) oy = Math.max(-0.5, Math.min(0.5, 0.5 * (u - d) / dyn));
+        const ix = bx + ox - qx, iy = by + oy - qy;
+        // alpha-beta (homing) gains; measurement weighted by match confidence, prediction is
+        // already precise because it comes from the whole-frame camera motion
+        const conf = Math.min(1, Math.max(0, (best - 0.55) / 0.35));
+        const G = this.state === 'lost' ? 1 : 0.3 * conf, H = 0.06 * conf;
+        this.x = qx + G * ix; this.y = qy + G * iy;
+        this.vx = (this.vx + H * ix) * 0.98; this.vy = (this.vy + H * iy) * 0.98;
+        if (best > 0.8) {                                           // adapt to slow appearance change
+          const { p } = this._patch(g, Math.round(this.x), Math.round(this.y));
+          for (let k = 0; k < p.length; k++) this.T[k] = 0.95 * this.T[k] + 0.05 * p[k];
+        }
+        this.lost = 0; this.state = 'locked';
+      } else {
+        this.x = qx; this.y = qy; this.vx *= 0.9; this.vy *= 0.9;   // coast on prediction
+        if (++this.lost > 10) this.state = 'lost';
+      }
+      if (!this._inside(this.x, this.y, 0)) { this.state = 'lost'; this.lost = Math.max(this.lost, 11); }
+      return this;
+    }
+  }
+
+  /**
+   * Translation that puts the target (frame-centred analysis px) at the lock point, given the
+   * rotation/scale correction c, clamped to the available headroom lim {x,y}.
+   */
+  function targetCorrection(tx, ty, lockX, lockY, c, lim) {
+    const a = c.scale * Math.cos(c.da), b = c.scale * Math.sin(c.da);
+    let dx = lockX - (a * tx - b * ty), dy = lockY - (b * tx + a * ty);
+    const ex = Math.abs(dx) > lim.x, ey = Math.abs(dy) > lim.y;
+    dx = Math.max(-lim.x, Math.min(lim.x, dx)); dy = Math.max(-lim.y, Math.min(lim.y, dy));
+    return { dx, dy, atEdge: ex || ey };
+  }
+
+  /**
+   * Complete per-frame stabilization logic (everything except pixel drawing).
+   * Geometry: G = output pixels per analysis pixel (includes crop zoom + user zoom),
+   * W,H = output size. The renderer draws: translate(W/2,H/2) scale(G) translate(c.dx,c.dy)
+   * rotate(c.da) scale(c.scale) then the frame centred, in analysis units.
+   */
+  class Pipeline {
+    constructor(aw, ah, opts) {
+      opts = opts || {};
+      this.aw = aw; this.ah = ah;
+      this.est = new MotionEstimator(aw, ah);
+      this.smoother = new TrajectorySmoother({ w: aw, h: ah, margin: 0.1 });
+      this.tracker = new TargetTracker(aw, ah);
+      this.setMode(opts.mode || 'smooth');
+      this.c = { dx: 0, dy: 0, da: 0, scale: 1 };
+      this.lockPt = null; this.atEdge = false; this.gray = null;
+    }
+    setMode(m) { this.mode = m; this.smoother.set({ mode: m === 'smooth' ? 'smooth' : 'lock' }); if (m !== 'target') this.unlock(); }
+    get targetState() { return this.tracker.state; }
+    _lims(G, W, H, c) {
+      const s = c ? c.scale : 1, sa = c ? Math.abs(Math.sin(c.da)) : 0;
+      return {
+        x: Math.max(0, s * this.aw / 2 - W / (2 * G) - sa * s * this.ah / 2),
+        y: Math.max(0, s * this.ah / 2 - H / (2 * G) - sa * s * this.aw / 2),
+      };
+    }
+    step(gray, geom, enabled) {
+      this.gray = gray; this.G = geom.G; this.W = geom.W; this.H = geom.H;
+      const zoom = geom.G * this.aw / geom.W;                // total magnification vs. fit-to-output
+      this.smoother.set({ margin: Math.max(0.01, (1 - 1 / Math.max(zoom, 1.0001)) / 2) });
+      const m = this.est.process(gray);
+      let c = this.smoother.update(m, this._lims(geom.G, geom.W, geom.H));
+      this.atEdge = false;
+      if (this.tracker.state !== 'idle') {
+        this.tracker.update(gray, m);
+        const tc = targetCorrection(this.tracker.x - this.aw / 2, this.tracker.y - this.ah / 2, this.lockPt.x, this.lockPt.y, c, this._lims(geom.G, geom.W, geom.H, c));
+        c.dx = tc.dx; c.dy = tc.dy; this.atEdge = tc.atEdge;
+        const r = this.smoother.raw, s = this.smoother.sm; s[0] = r[0] + c.dx; s[1] = r[1] + c.dy;   // seamless unlock
+      } else {
+        const L = this._lims(geom.G, geom.W, geom.H, c);
+        c.dx = Math.max(-L.x, Math.min(L.x, c.dx)); c.dy = Math.max(-L.y, Math.min(L.y, c.dy));
+      }
+      if (!enabled) c = { dx: 0, dy: 0, da: 0, scale: 1 };
+      this.c = c; this.m = m;
+      return c;
+    }
+    /** output pixel -> analysis pixel in the current frame */
+    screenToFrame(sx, sy) {
+      const c = this.c, Lx = (sx - this.W / 2) / this.G - c.dx, Ly = (sy - this.H / 2) / this.G - c.dy;
+      const a = Math.cos(-c.da) / c.scale, b = Math.sin(-c.da) / c.scale;
+      return { x: a * Lx - b * Ly + this.aw / 2, y: b * Lx + a * Ly + this.ah / 2 };
+    }
+    /** analysis pixel in current frame -> output pixel */
+    frameToScreen(x, y) {
+      const c = this.c, a = c.scale * Math.cos(c.da), b = c.scale * Math.sin(c.da), px = x - this.aw / 2, py = y - this.ah / 2;
+      return { x: this.W / 2 + this.G * (a * px - b * py + c.dx), y: this.H / 2 + this.G * (b * px + a * py + c.dy) };
+    }
+    /** Lock on the target at analysis pixel (x,y) of the current frame; it stays where it is on screen now. */
+    lockAtFrame(x, y) {
+      if (!this.gray || !this.tracker.lock(this.gray, x, y)) return false;
+      const s = this.frameToScreen(this.tracker.x, this.tracker.y);
+      this.lockPt = { x: (s.x - this.W / 2) / this.G, y: (s.y - this.H / 2) / this.G };
+      if (this.mode !== 'target') { this.mode = 'target'; this.smoother.set({ mode: 'lock' }); }
+      return true;
+    }
+    lockAtScreen(sx, sy) { const p = this.screenToFrame(sx, sy); return this.lockAtFrame(p.x, p.y); }
+    unlock() { this.tracker.unlock(); this.lockPt = null; this.atEdge = false; }
+  }
+
+  const api = { Pipeline, toGray, downsample2, detectPoints, trackPoint, buildPyramid, ransacSimilarity, MotionEstimator, TrajectorySmoother, TargetTracker, targetCorrection };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SteadyCamCore = api;
 })(typeof self !== 'undefined' ? self : this);
-/*! SteadyCam SDK — drop-in stabilizer for any web app that uses the camera.
- *  Usage:
- *    const cam = new SteadyCam(videoOrCanvas, { mode: 'smooth' | 'lock', crop: 0.1 });
- *    cam.start();                     // draws stabilized frames into cam.canvas
- *    const stream = cam.captureStream(30); // MediaStream for MediaRecorder / WebRTC
+/*! SteadyCam SDK v2 — live, in-camera stabilization for any web app that uses the camera.
+ *
+ *  1) One line, every camera feature on the page gets stabilized video:
+ *       SteadyCam.install({ mode: 'smooth' });       // patches getUserMedia
+ *  2) Stabilize a stream you already have (recording, WebRTC, live streaming):
+ *       const { stream, cam } = await SteadyCam.stabilizeStream(cameraStream);
+ *  3) Full control:
+ *       const cam = new SteadyCam(videoEl, { mode: 'target', output: 1080 });
+ *       cam.start(); cam.lockAtScreen(x, y); cam.setZoom(2);
+ *       const rec = new SteadyCam.Recorder(cam.captureStream(30), cam); rec.start(); const blob = await rec.stop();
+ *
+ *  Modes: 'smooth' (keeps intentional pans), 'lock' (tripod: holds framing and size),
+ *         'target' (lock-on: keeps the tapped subject fixed on screen while the phone moves).
  */
 (function (root) {
   'use strict';
@@ -386,95 +625,166 @@ pre { margin: 0; background: var(--panel); border: 1px solid var(--line); border
       opts = opts || {};
       this.source = source;
       this.canvas = opts.canvas || document.createElement('canvas');
-      this.ctx = this.canvas.getContext('2d');
+      this.ctx = this.canvas.getContext('2d', { alpha: false });
       this.small = document.createElement('canvas');
       this.sctx = this.small.getContext('2d', { willReadFrequently: true });
-      this.aw = 160;
+      this.aw = opts.analysisWidth || 160;
       this.enabled = opts.enabled !== false;
       this.mode = opts.mode || 'smooth';
-      this.crop = opts.crop != null ? opts.crop : 0.1;
-      this.maxWidth = opts.maxWidth || 1280;
+      this.crop = opts.crop != null ? opts.crop : 0.1;          // stabilization margin per side
+      this.zoom = 1;                                              // digital zoom on top
+      this.output = opts.output || 1080;                          // output short side, or 'source'
       this.onFrame = opts.onFrame || null;
-      this.smoother = new Core.TrajectorySmoother({ mode: this.mode, margin: this.crop });
-      this.stats = { rawRms: 0, stabRms: 0, reduction: 0, inliers: 0, points: 0, ms: 0 };
-      this._key = '';
-      this._raf = 0;
-      this._prevStab = [0, 0];
+      this.beforeFrame = opts.beforeFrame || null;
+      this.stats = { rawRms: 0, stabRms: 0, reduction: 0, inliers: 0, points: 0, ms: 0, rawPos: [0, 0], stabPos: [0, 0] };
+      this._key = ''; this._raf = 0; this._lastT = -1; this._prevStab = [0, 0];
     }
-    setMode(m) { this.mode = m; this.smoother.set({ mode: m }); }
-    setCrop(c) { this.crop = c; this.smoother.set({ margin: c }); }
+    setSource(el) { this.source = el; this._key = ''; this._lastT = -1; }
+    setMode(m) { this.mode = m; if (this.pipe) this.pipe.setMode(m); }
+    setCrop(c) { this.crop = c; }
+    setZoom(z) { this.zoom = Math.max(1, Math.min(8, z)); }
     setEnabled(on) { this.enabled = on; }
-    reset() { this._key = ''; }
-    _size() {
-      const s = this.source;
-      return s.videoWidth != null ? [s.videoWidth, s.videoHeight] : [s.width, s.height];
+    setOutput(o) { this.output = o; this._key = ''; }
+    get targetState() { return this.pipe ? this.pipe.targetState : 'idle'; }
+    get atEdge() { return this.pipe ? this.pipe.atEdge : false; }
+    /** Lock on whatever is at this output-canvas pixel. Returns false on a featureless spot. */
+    lockAtScreen(x, y) { if (!this.pipe) return false; const ok = this.pipe.lockAtScreen(x, y); if (ok) this.mode = 'target'; return ok; }
+    /** Lock on a source-video pixel. */
+    lockAtSource(x, y) { if (!this.pipe) return false; const k = this.aw / this._sw; const ok = this.pipe.lockAtFrame(x * k, y * k); if (ok) this.mode = 'target'; return ok; }
+    unlock() { if (this.pipe) this.pipe.unlock(); }
+    /** Output pixel where the locked target sits now (for drawing a reticle), or null. */
+    lockScreenPoint() { const p = this.pipe; if (!p || !p.lockPt) return null; return { x: p.W / 2 + p.G * p.lockPt.x, y: p.H / 2 + p.G * p.lockPt.y }; }
+    _size() { const s = this.source; return s && s.videoWidth != null ? [s.videoWidth, s.videoHeight] : s ? [s.width, s.height] : [0, 0]; }
+    _setup(sw, sh) {
+      const short = Math.min(sw, sh), target = this.output === 'source' ? short : Math.min(short, this.output);
+      const f = target / short;
+      this.canvas.width = Math.round(sw * f / 2) * 2; this.canvas.height = Math.round(sh * f / 2) * 2;
+      this.ah = Math.max(48, Math.round(this.aw * sh / sw / 2) * 2);
+      this.small.width = this.aw; this.small.height = this.ah;
+      this.gray = new Float32Array(this.aw * this.ah);
+      const keep = this.pipe && this.pipe.mode;
+      this.pipe = new Core.Pipeline(this.aw, this.ah, { mode: this.mode === 'target' ? 'target' : this.mode });
+      this._sw = sw; this._sh = sh; this._prevStab = [0, 0];
+      return keep;
     }
     frame() {
+      if (this.beforeFrame) this.beforeFrame();
       const [sw, sh] = this._size();
       if (!sw || !sh) return null;
-      if (this.source.readyState != null && this.source.readyState < 2) return null;
-      const key = sw + 'x' + sh;
-      if (key !== this._key) {
-        this._key = key;
-        const ow = Math.min(sw, this.maxWidth);
-        this.canvas.width = ow; this.canvas.height = Math.round(ow * sh / sw);
-        this.ah = Math.max(48, Math.round(this.aw * sh / sw / 2) * 2);
-        this.small.width = this.aw; this.small.height = this.ah;
-        this.gray = new Float32Array(this.aw * this.ah);
-        this.est = new Core.MotionEstimator(this.aw, this.ah);
-        this.smoother.set({ w: this.aw, h: this.ah });
-        this.smoother.reset();
-        this._prevStab = [0, 0];
+      const s = this.source;
+      if (s.readyState != null) {
+        if (s.readyState < 2) return null;
+        if (s.currentTime === this._lastT && !s.srcObject) return null;   // file video paused / same frame
+        this._lastT = s.currentTime;
       }
+      const key = sw + 'x' + sh + ':' + this.output;
+      if (key !== this._key) { this._key = key; this._setup(sw, sh); }
+      const W = this.canvas.width, H = this.canvas.height;
       const t0 = performance.now();
-      this.sctx.drawImage(this.source, 0, 0, this.aw, this.ah);
+      this.sctx.drawImage(s, 0, 0, this.aw, this.ah);
       Core.toGray(this.sctx.getImageData(0, 0, this.aw, this.ah).data, this.aw, this.ah, this.gray);
-      const m = this.est.process(this.gray);
-      const c = this.smoother.update(m);
+      const cropZoom = this.enabled ? 1 / (1 - 2 * this.crop) : 1;
+      const G = cropZoom * this.zoom * W / this.aw;
+      if (this.pipe.mode !== this.mode) this.pipe.setMode(this.mode);   // 'target' with nothing locked behaves as tripod
+      const c = this.pipe.step(this.gray, { G, W, H }, this.enabled);
+      const m = this.pipe.m;
       const ms = performance.now() - t0;
 
-      // live shake meter (output pixels, exponential RMS of frame-to-frame motion)
-      const k = this.canvas.width / this.aw;
-      const r = this.smoother.raw;
+      // live shake meter in output pixels
+      const k = G / cropZoom / this.zoom, r = this.pipe.smoother.raw;
       const sx = r[0] + c.dx, sy = r[1] + c.dy;
-      const rawD = Math.hypot(m.dx, m.dy) * k;
-      const stD = Math.hypot(sx - this._prevStab[0], sy - this._prevStab[1]) * k;
+      const rawD = Math.hypot(m.dx, m.dy) * k, stD = Math.hypot(sx - this._prevStab[0], sy - this._prevStab[1]) * k;
       this._prevStab = [sx, sy];
       const st = this.stats, a = 0.06;
       st.rawRms = Math.sqrt((1 - a) * st.rawRms ** 2 + a * rawD * rawD);
       st.stabRms = Math.sqrt((1 - a) * st.stabRms ** 2 + a * stD * stD);
       st.reduction = st.rawRms > 0.3 ? Math.max(0, 1 - st.stabRms / st.rawRms) : 0;
-      st.inliers = this.est.last.inliers; st.points = this.est.last.total;
-      st.ms = (1 - a) * st.ms + a * ms;
-      st.rawPos = [r[0] * k, r[1] * k]; st.stabPos = [sx * k, sy * k];
+      st.inliers = this.pipe.est.last.inliers; st.points = this.pipe.est.last.total;
+      st.ms = (1 - a) * st.ms + a * ms; st.rawPos = [r[0] * k, r[1] * k]; st.stabPos = [sx * k, sy * k];
+      st.target = this.pipe.targetState; st.edge = this.pipe.atEdge; st.score = this.pipe.tracker.score;
 
-      const ctx = this.ctx, W = this.canvas.width, H = this.canvas.height, f = W / sw;
+      // one resample, straight from the full-resolution camera frame
+      const ctx = this.ctx, kSrc = sw / this.aw;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
       ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
-      if (this.enabled) {
-        const zoom = 1 / (1 - 2 * this.crop);
-        const kSrc = sw / this.aw;
-        ctx.translate(W / 2, H / 2);
-        ctx.scale(zoom * f, zoom * f);
-        ctx.translate(c.dx * kSrc, c.dy * kSrc);
-        ctx.rotate(c.da);
-        ctx.scale(c.scale, c.scale);
-        ctx.drawImage(this.source, -sw / 2, -sh / 2, sw, sh);
-      } else {
-        ctx.drawImage(this.source, 0, 0, W, H);
-      }
-      if (this.onFrame) this.onFrame(this.stats, c);
+      ctx.translate(W / 2, H / 2);
+      ctx.scale(G / kSrc, G / kSrc);
+      ctx.translate(c.dx * kSrc, c.dy * kSrc);
+      ctx.rotate(c.da);
+      ctx.scale(c.scale, c.scale);
+      ctx.drawImage(s, -sw / 2, -sh / 2, sw, sh);
+      if (this.onFrame) this.onFrame(st, c);
       return c;
     }
     start() {
-      const loop = () => { this._raf = requestAnimationFrame(loop); this.frame(); };
-      cancelAnimationFrame(this._raf); this._raf = requestAnimationFrame(loop);
+      cancelAnimationFrame(this._raf);
+      const loop = () => { this._raf = requestAnimationFrame(loop); try { this.frame(); } catch (e) { console.error('SteadyCam frame', e); } };
+      this._raf = requestAnimationFrame(loop);
       return this;
     }
     stop() { cancelAnimationFrame(this._raf); this._raf = 0; }
     captureStream(fps) { return this.canvas.captureStream(fps || 30); }
+
+    /** Wrap a camera MediaStream; returns a stabilized MediaStream (audio passed through untouched). */
+    static async stabilizeStream(input, opts) {
+      opts = opts || {};
+      const v = document.createElement('video');
+      v.muted = true; v.playsInline = true; v.setAttribute('playsinline', ''); v.srcObject = input;
+      Object.assign(v.style, { position: 'fixed', width: '2px', height: '2px', opacity: '0.01', pointerEvents: 'none', left: '0', top: '0' });
+      document.body.appendChild(v);                                // iOS only decodes attached videos reliably
+      await v.play().catch(() => {});
+      const vt = input.getVideoTracks()[0], fps = (vt && vt.getSettings().frameRate) || opts.fps || 30;
+      const cam = new SteadyCam(v, opts).start();
+      const out = cam.captureStream(Math.round(fps));
+      input.getAudioTracks().forEach(t => out.addTrack(t));
+      const ot = out.getVideoTracks()[0], origStop = ot.stop.bind(ot);
+      ot.stop = () => { origStop(); cam.stop(); input.getTracks().forEach(t => t.stop()); v.remove(); };
+      ot.steadycam = cam; ot.cameraTrack = vt;                     // zoom/torch stay reachable via cameraTrack
+      return { stream: out, cam, cameraTrack: vt };
+    }
+
+    /** One-line plugin: every getUserMedia video stream on this page comes back stabilized. */
+    static install(opts) {
+      const md = navigator.mediaDevices;
+      if (!md || md.__steadycam) return;
+      const orig = md.getUserMedia.bind(md);
+      md.getUserMedia = async (constraints) => {
+        const s = await orig(constraints);
+        if (!constraints || !constraints.video || (opts && opts.enabled === false)) return s;
+        return (await SteadyCam.stabilizeStream(s, opts)).stream;
+      };
+      md.__steadycam = true;
+    }
   }
 
+  /** Recorder: high-bitrate MP4 (Safari) or WebM, resolves a Blob on stop. */
+  class Recorder {
+    constructor(stream, cam, opts) {
+      opts = opts || {};
+      this.stream = stream;
+      const types = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp9', 'video/webm'];
+      this.type = types.find(t => root.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
+      const px = cam ? cam.canvas.width * cam.canvas.height : 1920 * 1080;
+      this.bitrate = opts.bitrate || Math.min(50e6, Math.max(8e6, px * 30 * 0.2));   // ~12 Mbps @1080p30
+    }
+    get extension() { return (this.rec && this.rec.mimeType || this.type).includes('mp4') ? 'mp4' : 'webm'; }
+    start() {
+      this.chunks = [];
+      const o = { videoBitsPerSecond: this.bitrate, audioBitsPerSecond: 160000 };
+      if (this.type) o.mimeType = this.type;
+      this.rec = new MediaRecorder(this.stream, o);
+      this.rec.ondataavailable = (e) => { if (e.data && e.data.size) this.chunks.push(e.data); };
+      this.done = new Promise(res => { this.rec.onstop = () => res(new Blob(this.chunks, { type: this.rec.mimeType || this.type || 'video/webm' })); });
+      this.rec.start(500);
+      this.startedAt = Date.now();
+    }
+    get recording() { return !!this.rec && this.rec.state === 'recording'; }
+    stop() { if (this.rec && this.rec.state !== 'inactive') this.rec.stop(); return this.done; }
+  }
+
+  SteadyCam.Recorder = Recorder;
+  SteadyCam.version = '2.0.0';
   root.SteadyCam = SteadyCam;
 })(typeof self !== 'undefined' ? self : this);
 
@@ -483,18 +793,19 @@ pre { margin: 0; background: var(--panel); border: 1px solid var(--line); border
 (function () {
   'use strict';
   const $ = (id) => document.getElementById(id);
-  const out = $('out'), rawC = $('raw'), rctx = rawC.getContext('2d');
-  let source = null, stream = null, video = null, demo = null, recorder = null, chunks = [];
+  const out = $('out'), rawC = $('raw'), rctx = rawC.getContext('2d'), finder = $('finder');
+  const S = { source: null, stream: null, video: null, demo: null, rec: null, lastClip: null, facing: 'environment',
+    quality: 1080, fps: 30, hwZoom: null, track: null, torch: false };
   const hist = [];
 
-  // ---------- built-in shaky demo footage (handheld walk: tremor + inches forward/back + roll) ----------
+  // ---------- built-in demo: handheld street shot with a drone to lock on ----------
   function makeDemo() {
     const scene = document.createElement('canvas'); scene.width = 1600; scene.height = 1000;
     const g = scene.getContext('2d');
-    const sky = g.createLinearGradient(0, 0, 0, 600); sky.addColorStop(0, '#30425e'); sky.addColorStop(1, '#c98a55');
+    const sky = g.createLinearGradient(0, 0, 0, 640); sky.addColorStop(0, '#2c3d58'); sky.addColorStop(1, '#c98a55');
     g.fillStyle = sky; g.fillRect(0, 0, 1600, 1000);
     let s = 3; const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
-    for (let i = 0; i < 26; i++) {               // skyline
+    for (let i = 0; i < 26; i++) {
       const w = 50 + rnd() * 90, h = 180 + rnd() * 360, x = i * 64 - 40;
       g.fillStyle = `hsl(${210 + rnd() * 20},18%,${14 + rnd() * 12}%)`; g.fillRect(x, 640 - h, w, h + 40);
       g.fillStyle = 'rgba(255,214,140,.85)';
@@ -502,91 +813,185 @@ pre { margin: 0; background: var(--panel); border: 1px solid var(--line); border
     }
     g.fillStyle = '#2a2c2a'; g.fillRect(0, 660, 1600, 340);
     g.fillStyle = '#e9e3cf'; for (let x = 0; x < 1600; x += 120) g.fillRect(x, 800, 70, 10);
-    for (let i = 0; i < 16; i++) { g.fillStyle = i % 2 ? '#f2f0e6' : '#1b1b1b'; g.fillRect(560 + (i % 8) * 60, 300 + Math.floor(i / 8) * 60, 60, 60); }
-    g.fillStyle = '#f0a63a'; g.fillRect(520, 440, 560, 70); g.fillStyle = '#111';
-    g.font = '700 46px "Barlow Condensed", Arial Narrow, sans-serif'; g.fillText('STEADYCAM · TEST CHART', 560, 492);
-    const frame = document.createElement('canvas'); frame.width = 960; frame.height = 540;
-    const f = frame.getContext('2d'); let t = 0, raf = 0;
-    function draw() {
-      t += 1 / 30;
-      const n = (a, b) => Math.sin(t * a + b) + 0.5 * Math.sin(t * a * 2.3 + b * 1.7);
-      const tx = 34 * n(9.1, 0) + 20 * Math.sin(t * 0.35) * 4, ty = 26 * n(11.3, 2) + 8 * Math.sin(t * 2.1);
-      const sc = 1 + 0.035 * Math.sin(t * 2.6) + 0.015 * n(7, 4);   // phone moving inches front/back
-      const rot = 0.022 * n(8.3, 1);
-      f.setTransform(1, 0, 0, 1, 0, 0); f.fillStyle = '#000'; f.fillRect(0, 0, 960, 540);
-      f.translate(480 + tx, 270 + ty); f.rotate(rot); f.scale(sc * 0.75, sc * 0.75);
-      f.drawImage(scene, -800, -500);
-      raf = requestAnimationFrame(draw);
-    }
-    draw();
-    return { canvas: frame, stop() { cancelAnimationFrame(raf); } };
+    const frame = document.createElement('canvas'); frame.width = 1280; frame.height = 720;
+    const f = frame.getContext('2d'); let t = 0;
+    const drone = (x, y) => {
+      f.save(); f.translate(x, y);
+      f.strokeStyle = '#151515'; f.lineWidth = 10; f.beginPath(); f.moveTo(-48, -32); f.lineTo(48, 32); f.moveTo(48, -32); f.lineTo(-48, 32); f.stroke();
+      for (const [px, py] of [[-50, -34], [50, -34], [-50, 34], [50, 34]]) { f.fillStyle = '#222'; f.beginPath(); f.arc(px, py, 20, 0, 7); f.fill(); f.fillStyle = '#ddd'; f.beginPath(); f.arc(px, py, 7, 0, 7); f.fill(); }
+      f.fillStyle = '#f07a2a'; f.fillRect(-26, -18, 52, 36); f.fillStyle = '#fff'; f.fillRect(-8, -6, 16, 12);
+      f.restore();
+    };
+    const api = { canvas: frame, pose: null,
+      dronePos() { return [800 + 150 * Math.sin(t * 0.32), 340 + 60 * Math.sin(t * 0.64)]; },
+      tick() {
+        t += 1 / 30;
+        const n = (a, b) => Math.sin(t * a + b) + 0.5 * Math.sin(t * a * 2.3 + b * 1.7);
+        const tx = 24 * n(9.1, 0) + 14 * Math.sin(t * 0.7), ty = 18 * n(11.3, 2) + 8 * Math.sin(t * 2.1);
+        const sc = 1 + 0.035 * Math.sin(t * 2.6) + 0.012 * n(7, 4);      // phone moving inches front/back
+        const rot = 0.02 * n(8.3, 1), base = 1.0;
+        f.setTransform(1, 0, 0, 1, 0, 0); f.fillStyle = '#000'; f.fillRect(0, 0, 1280, 720);
+        f.translate(640 + tx, 360 + ty); f.rotate(rot); f.scale(sc * base, sc * base); f.translate(-800, -500);
+        f.drawImage(scene, 0, 0); const d = this.dronePos(); drone(d[0], d[1]);
+        this.pose = { tx, ty, sc: sc * base, rot };
+      },
+      droneInFrame() {   // where the drone is in the current demo frame (source pixels)
+        const p = this.pose, d = this.dronePos(), x = d[0] - 800, y = d[1] - 500, c = Math.cos(p.rot) * p.sc, s2 = Math.sin(p.rot) * p.sc;
+        return [640 + p.tx + c * x - s2 * y, 360 + p.ty + s2 * x + c * y];
+      } };
+    api.tick();
+    return api;
   }
 
-  const cam = new SteadyCam(document.createElement('canvas'), { canvas: out, mode: 'smooth', crop: 0.1, onFrame: onFrame });
+  const cam = new SteadyCam(document.createElement('canvas'), { canvas: out, mode: 'smooth', crop: 0.1, output: S.quality,
+    onFrame, beforeFrame: () => { if (S.demo) S.demo.tick(); } });
 
-  function setSource(el, label) {
-    source = el; cam.source = el; cam.reset(); hist.length = 0;
-    $('srcLabel').textContent = label;
-  }
+  // ---------- helpers ----------
+  const pressed = (seg, btn) => { for (const b of $(seg).querySelectorAll('button')) b.setAttribute('aria-pressed', b === btn); };
+  const showMsg = (t) => { $('msgText').textContent = t || ''; $('msg').hidden = !t; };
+  const setState = (t, cls) => { $('stateText').textContent = t; $('state').className = 'pill ' + (cls || ''); };
+  const fmtTime = (ms) => { const s = Math.floor(ms / 1000); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+  let wake = null;
+  async function keepAwake(on) { try { if (on && !wake && navigator.wakeLock) wake = await navigator.wakeLock.request('screen'); else if (!on && wake) { await wake.release(); wake = null; } } catch (e) { wake = null; } }
+
+  function setSource(el, label) { S.source = el; cam.setSource(el); hist.length = 0; $('srcLabel').textContent = label; }
   function stopAll() {
-    if (demo) { demo.stop(); demo = null; }
-    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-    if (video) { video.pause(); if (video.src) URL.revokeObjectURL(video.src); video = null; }
+    if (S.demo) S.demo = null;
+    if (S.stream) { S.stream.getTracks().forEach(t => t.stop()); S.stream = null; }
+    if (S.video) { S.video.pause(); if (S.video.src) URL.revokeObjectURL(S.video.src); S.video.remove(); S.video = null; }
+    S.track = null; S.hwZoom = null; $('flip').disabled = true; $('torch').disabled = true; keepAwake(false);
   }
-  function pressed(seg, btn) { for (const b of $(seg).querySelectorAll('button')) b.setAttribute('aria-pressed', b === btn); }
-  function showMsg(text) { $('msgText').textContent = text; $('msg').hidden = !text; }
-  function setState(text, cls) { $('stateText').textContent = text; $('state').className = 'pill ' + (cls || ''); }
+  function hiddenVideo() {
+    const v = document.createElement('video'); v.playsInline = true; v.setAttribute('playsinline', ''); v.muted = true;
+    Object.assign(v.style, { position: 'fixed', width: '2px', height: '2px', opacity: '0.01', left: '0', top: '0', pointerEvents: 'none' });
+    document.body.appendChild(v); return v;
+  }
 
+  // ---------- sources ----------
   function useDemo() {
     stopRec(); stopAll(); showMsg('');
-    demo = makeDemo(); setSource(demo.canvas, 'DEMO · HANDHELD'); pressed('srcSeg', $('srcDemo')); setState('Live', 'live');
+    S.demo = makeDemo(); setSource(S.demo.canvas, 'DEMO · HANDHELD 1280×720'); pressed('srcSeg', $('srcDemo')); setState('Live', 'live');
+    setMode('target'); setZoom(1.15);
+    let n = 0; const auto = () => { if (!S.demo) return; if (++n < 40) return requestAnimationFrame(auto); const p = S.demo.droneInFrame(); cam.lockAtSource(p[0], p[1]); };
+    requestAnimationFrame(auto);
   }
   async function useCamera() {
     stopRec(); pressed('srcSeg', $('srcCam'));
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      showMsg('This browser view has no camera access. Open the standalone SteadyCam page on your phone over HTTPS, or load a video file.'); return;
+      showMsg('This view has no camera access. Open the SteadyCam page directly in Safari or Chrome over HTTPS, or load a video file.'); return;
     }
-    const v = { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } };
+    const big = S.quality >= 1080;   // capture 4K when possible so crop and zoom keep full output detail
+    const v = { facingMode: { ideal: S.facing }, width: { ideal: big ? 3840 : 1920 }, height: { ideal: big ? 2160 : 1080 }, frameRate: { ideal: S.fps } };
     let s;
-    try { s = await navigator.mediaDevices.getUserMedia({ video: v, audio: true }); }
+    try { s = await navigator.mediaDevices.getUserMedia({ video: v, audio: $('mic').checked }); }
     catch (e) {
       try { s = await navigator.mediaDevices.getUserMedia({ video: v }); }
-      catch (e2) { showMsg('Camera access was refused here. Open the standalone SteadyCam page on your phone over HTTPS and allow the camera, or load a video file.'); setState('No camera'); return; }
+      catch (e2) { showMsg('Camera access was refused. Allow camera access for this site in your browser settings, open the page over HTTPS, or load a video file.'); setState('No camera'); return; }
     }
-    stopAll(); stream = s; showMsg('');
-    const track = s.getVideoTracks()[0];
-    try { await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e) { /* not supported on every device */ }
-    video = document.createElement('video'); video.playsInline = true; video.muted = true; video.srcObject = s;
-    await video.play().catch(() => {});
-    setSource(video, 'CAMERA · LIVE'); setState('Live', 'live');
+    stopAll(); S.stream = s; showMsg('');
+    const track = s.getVideoTracks()[0]; S.track = track;
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    try { await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e) {}
+    S.hwZoom = caps.zoom && caps.zoom.max > 1 ? caps.zoom : null;
+    $('zoom').max = S.hwZoom ? Math.max(4, Math.min(10, caps.zoom.max * 2)) : 4;
+    $('zoomHint').textContent = S.hwZoom ? 'Uses the lens zoom first, then digital zoom.' : 'Digital zoom from the full-resolution frame.';
+    $('torch').disabled = !caps.torch; $('flip').disabled = false;
+    S.video = hiddenVideo(); S.video.srcObject = s; await S.video.play().catch(() => {});
+    const st = track.getSettings();
+    setSource(S.video, (S.facing === 'user' ? 'FRONT' : 'BACK') + ' CAM ' + (st.width || '?') + '×' + (st.height || '?') + ' @' + Math.round(st.frameRate || S.fps));
+    setState('Live', 'live'); setZoom(+$('zoom').value); keepAwake(true);
   }
   function useFile(file) {
     stopRec(); stopAll(); showMsg('');
-    video = document.createElement('video'); video.playsInline = true; video.muted = true; video.loop = true;
-    video.src = URL.createObjectURL(file);
-    video.play().catch(() => showMsg('This video format cannot be played in this browser. Try an MP4 or WebM clip.'));
-    setSource(video, 'FILE · ' + file.name.slice(0, 22).toUpperCase()); pressed('srcSeg', $('srcFile')); setState('Live', 'live');
+    S.video = hiddenVideo(); S.video.loop = true; S.video.src = URL.createObjectURL(file);
+    S.video.play().catch(() => showMsg('This video format cannot be played here. Try an MP4 or WebM clip.'));
+    setSource(S.video, 'FILE · ' + file.name.slice(0, 22).toUpperCase()); pressed('srcSeg', $('srcFile')); setState('Live', 'live');
   }
+
+  // ---------- modes, zoom, tap-to-lock ----------
+  const hints = { smooth: 'Removes shake and keeps your intentional pans.', lock: 'Holds the framing still like a tripod, including size when you move forward or back.', target: 'Tap a subject. It stays fixed on screen while you move, like a lock-on.' };
+  function setMode(m) {
+    cam.setMode(m); if (m !== 'target') cam.unlock();
+    pressed('modeSeg', $({ smooth: 'modeSmooth', lock: 'modeLock', target: 'modeTarget' }[m])); $('modeHint').textContent = hints[m];
+    $('stabLabel').textContent = { smooth: 'SMOOTH', lock: 'TRIPOD', target: 'TARGET' }[m];
+  }
+  function setZoom(z) {
+    z = Math.max(1, Math.min(+$('zoom').max, z)); $('zoom').value = z;
+    let digital = z;
+    if (S.hwZoom && S.track) {
+      const hw = Math.max(S.hwZoom.min || 1, Math.min(S.hwZoom.max, z));
+      S.track.applyConstraints({ advanced: [{ zoom: hw }] }).catch(() => {}); digital = z / hw;
+    }
+    cam.setZoom(digital);
+    $('zoomVal').textContent = $('zoomLabel').textContent = z.toFixed(1) + '×';
+  }
+  function toCanvas(e) { const r = out.getBoundingClientRect(); return [(e.clientX - r.left) * out.width / r.width, (e.clientY - r.top) * out.height / r.height]; }
+  function tapAt(e) {
+    const [x, y] = toCanvas(e);
+    if (cam.mode === 'target') {
+      if (!cam.lockAtScreen(x, y)) { $('tip').textContent = 'Nothing to lock on there. Tap a spot with detail, like an edge, a face or text.'; flashFocus(e); return; }
+      $('tip').textContent = 'Locked. Move the phone: the subject stays put. Tap elsewhere to re-lock.';
+    } else {
+      $('tip').textContent = 'Focus set. Choose Target lock to keep a subject fixed on screen.';
+    }
+    if (S.track) {   // also focus where the user tapped, where the camera supports it
+      const st = S.track.getSettings(); const r = out.getBoundingClientRect();
+      S.track.applyConstraints({ advanced: [{ pointsOfInterest: [{ x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }], focusMode: st.focusMode === 'continuous' ? 'continuous' : 'single-shot' }] }).catch(() => {});
+    }
+    flashFocus(e);
+  }
+  function flashFocus(e) { const r = finder.getBoundingClientRect(), b = $('focusBox'); b.style.left = (e.clientX - r.left) + 'px'; b.style.top = (e.clientY - r.top) + 'px'; b.classList.add('on'); setTimeout(() => b.classList.remove('on'), 60); }
+
+  const pts = new Map(); let pinch = null, down = null;
+  finder.addEventListener('pointerdown', (e) => {
+    finder.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]);
+    if (pts.size === 1) down = { x: e.clientX, y: e.clientY, t: Date.now() };
+    if (pts.size === 2) { const [a, b] = [...pts.values()]; pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), z: +$('zoom').value }; down = null; }
+  });
+  finder.addEventListener('pointermove', (e) => {
+    if (!pts.has(e.pointerId)) return; pts.set(e.pointerId, [e.clientX, e.clientY]);
+    if (pinch && pts.size === 2) { const [a, b] = [...pts.values()]; setZoom(pinch.z * Math.hypot(a[0] - b[0], a[1] - b[1]) / pinch.d); }
+  });
+  const up = (e) => {
+    pts.delete(e.pointerId); if (pts.size < 2) pinch = null;
+    if (down && pts.size === 0 && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 12 && Date.now() - down.t < 500) tapAt(e);
+    if (pts.size === 0) down = null;
+  };
+  finder.addEventListener('pointerup', up); finder.addEventListener('pointercancel', (e) => { pts.delete(e.pointerId); pinch = null; down = null; });
+  finder.addEventListener('wheel', (e) => { e.preventDefault(); setZoom(+$('zoom').value * (e.deltaY < 0 ? 1.06 : 1 / 1.06)); }, { passive: false });
 
   // ---------- per-frame readouts ----------
   function onFrame(st) {
-    const sw = source.videoWidth || source.width, sh = source.videoHeight || source.height;
-    if (rawC.width !== 320) { rawC.width = 320; }
-    const rh = Math.round(320 * sh / sw); if (rawC.height !== rh) rawC.height = rh;
-    rctx.drawImage(source, 0, 0, rawC.width, rawC.height);
+    const sw = S.source.videoWidth || S.source.width, sh = S.source.videoHeight || S.source.height;
+    const ar = out.width / out.height;
+    if (finder.dataset.ar !== String(ar)) { finder.dataset.ar = ar; finder.style.aspectRatio = out.width + ' / ' + out.height; finder.style.width = 'min(100%, calc(70vh * ' + ar.toFixed(4) + '))'; }
+    const rw = ar >= 1 ? 320 : 180; if (rawC.width !== rw) rawC.width = rw;
+    const rh = Math.round(rw * sh / sw); if (rawC.height !== rh) rawC.height = rh;
+    rctx.drawImage(S.source, 0, 0, rawC.width, rawC.height);
     hist.push([st.rawPos[0], st.stabPos[0]]); if (hist.length > 180) hist.shift();
+    // reticle
+    const p = cam.lockScreenPoint(), ret = $('reticle');
+    if (p && cam.mode === 'target') {
+      ret.hidden = false; ret.style.left = (p.x / out.width * 100) + '%'; ret.style.top = (p.y / out.height * 100) + '%';
+      const state = st.target === 'lost' ? 'lost' : st.edge ? 'edge' : 'ok';
+      ret.className = 'reticle ' + (state === 'ok' ? '' : state);
+      $('reticleText').textContent = state === 'lost' ? 'SEARCHING' : state === 'edge' ? 'AT EDGE' : 'LOCKED';
+      $('unlock').hidden = false;
+    } else { ret.hidden = true; $('unlock').hidden = true; }
   }
   setInterval(() => {
     const st = cam.stats;
     $('mRed').textContent = cam.enabled ? Math.round(st.reduction * 100) + '%' : 'off';
     $('mRaw').textContent = st.rawRms.toFixed(1) + ' px';
     $('mOut').textContent = (cam.enabled ? st.stabRms : st.rawRms).toFixed(1) + ' px';
-    $('mPts').textContent = st.inliers + '/' + st.points;
-    $('mMs').textContent = 'analysis ' + st.ms.toFixed(1) + ' ms/frame';
+    $('mTgt').textContent = cam.mode !== 'target' ? 'off' : st.target === 'idle' ? 'tap' : st.target === 'lost' ? 'search' : st.edge ? 'edge' : 'locked';
+    $('mInfo').textContent = 'out ' + out.width + '×' + out.height + ' · analysis ' + st.ms.toFixed(1) + ' ms · points ' + st.inliers + '/' + st.points;
+    if (S.rec) $('recLabel').textContent = '● REC ' + fmtTime(Date.now() - S.rec.startedAt);
     drawSpark();
-  }, 120);
+  }, 150);
   function drawSpark() {
     const c = $('spark'), dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+    if (!w) return;
     if (c.width !== Math.round(w * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
     const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
     if (hist.length < 2) return;
@@ -594,67 +999,79 @@ pre { margin: 0; background: var(--panel); border: 1px solid var(--line); border
     let lo = Infinity, hi = -Infinity; for (const p of hist) { lo = Math.min(lo, p[0], p[1]); hi = Math.max(hi, p[0], p[1]); }
     const pad = Math.max(4, (hi - lo) * 0.1); lo -= pad; hi += pad;
     const X = (i) => 6 + i * (w - 12) / 179, Y = (v) => h - 6 - (v - lo) / (hi - lo) * (h - 12);
-    g.strokeStyle = cs.getPropertyValue('--line'); g.lineWidth = 1; g.beginPath(); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();
     for (const [idx, col, lw] of [[0, '--raw', 1.2], [1, '--accent', 2.2]]) {
       g.strokeStyle = cs.getPropertyValue(col).trim(); g.lineWidth = lw; g.beginPath();
       hist.forEach((p, i) => i ? g.lineTo(X(i), Y(p[idx])) : g.moveTo(X(i), Y(p[idx]))); g.stroke();
     }
   }
 
-  // ---------- recording & saving ----------
+  // ---------- recording, autosave, save to Photos ----------
   let dl = null;
   if (window.claude && window.claude.use) window.claude.use('downloads').then(d => { dl = d; }).catch(() => {});
   async function saveBlob(blob, name) {
     if (dl) {
       try { await dl.save({ filename: name, data: blob }); return 'Saved ' + name; }
-      catch (e) { return e && e.code === 'declined' ? 'Save cancelled.' : 'Saving is not available in this view.'; }
+      catch (e) { return e && e.code === 'declined' ? 'Save cancelled. Tap Save clip to try again.' : 'Saving is not available in this view.'; }
     }
     if (window.claude) return 'Saving is not available in this view.';
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.append(a); a.click();
-    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000); return 'Saved ' + name;
-  }
-  function pickType() {
-    const types = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
-    return types.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 60000); return 'Saved ' + name + ' to Downloads';
   }
   function startRec() {
     if (!window.MediaRecorder) { $('recStatus').textContent = 'Recording is not supported in this browser.'; return; }
-    const s = cam.captureStream(30);
-    if (stream) stream.getAudioTracks().forEach(t => s.addTrack(t));
-    const type = pickType();
-    try { recorder = new MediaRecorder(s, type ? { mimeType: type, videoBitsPerSecond: 6e6 } : undefined); }
-    catch (e) { $('recStatus').textContent = 'Recording could not start in this browser.'; return; }
-    chunks = []; const t0 = Date.now();
-    recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-    recorder.onstop = async () => {
-      const ext = (recorder.mimeType || type).includes('mp4') ? 'mp4' : 'webm';
-      const blob = new Blob(chunks, { type: recorder.mimeType || type });
-      recorder = null; $('rec').setAttribute('aria-pressed', 'false'); $('rec').textContent = '● Record';
-      setState('Live', 'live');
-      if (!blob.size) { $('recStatus').textContent = 'Nothing was recorded.'; return; }
-      $('recStatus').textContent = 'Clip ready (' + (blob.size / 1e6).toFixed(1) + ' MB). Saving…';
-      $('recStatus').textContent = await saveBlob(blob, 'steadycam-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.' + ext);
-    };
-    recorder.start(250);
-    $('rec').setAttribute('aria-pressed', 'true'); $('rec').textContent = '■ Stop'; setState('Recording', 'rec');
-    const tick = setInterval(() => { if (!recorder) return clearInterval(tick); $('recStatus').textContent = 'Recording stabilized video · ' + Math.floor((Date.now() - t0) / 1000) + 's'; }, 500);
+    const s = cam.captureStream(S.fps);
+    if (S.stream && $('mic').checked) S.stream.getAudioTracks().forEach(t => s.addTrack(t));
+    const r = new SteadyCam.Recorder(s, cam);
+    try { r.start(); } catch (e) { $('recStatus').textContent = 'Recording could not start in this browser.'; return; }
+    S.rec = r; $('rec').setAttribute('aria-pressed', 'true'); $('rec').setAttribute('aria-label', 'Stop recording');
+    $('recLabel').hidden = false; $('recTitle').textContent = 'Recording';
+    $('recStatus').textContent = out.width + '×' + out.height + ' · ' + S.fps + ' fps · ' + Math.round(r.bitrate / 1e6) + ' Mbps · ' + r.extension.toUpperCase();
+    $('saveAgain').hidden = true; $('share').hidden = true; setState('Recording', 'rec'); keepAwake(true);
   }
-  function stopRec() { if (recorder && recorder.state !== 'inactive') recorder.stop(); }
+  async function stopRec() {
+    if (!S.rec) return;
+    const r = S.rec; S.rec = null;
+    $('rec').setAttribute('aria-pressed', 'false'); $('rec').setAttribute('aria-label', 'Start recording'); $('recLabel').hidden = true;
+    setState('Live', 'live');
+    const blob = await r.stop();
+    if (!blob.size) { $('recTitle').textContent = 'Ready to record'; $('recStatus').textContent = 'Nothing was recorded.'; return; }
+    const name = 'steadycam-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.' + r.extension;
+    S.lastClip = { blob, name };
+    $('recTitle').textContent = 'Clip ready · ' + (blob.size / 1e6).toFixed(1) + ' MB';
+    $('saveAgain').hidden = false;
+    const file = new File([blob], name, { type: blob.type });
+    $('share').hidden = !(navigator.canShare && navigator.canShare({ files: [file] }));
+    $('recStatus').textContent = $('autosave').checked ? await saveBlob(blob, name) : 'Tap Save clip to keep it.';
+  }
 
   // ---------- controls ----------
   $('srcDemo').onclick = useDemo;
   $('srcCam').onclick = useCamera;
   $('srcFile').onclick = () => $('file').click();
   $('file').onchange = (e) => { const f = e.target.files[0]; if (f) useFile(f); e.target.value = ''; };
-  $('modeSmooth').onclick = () => { cam.setMode('smooth'); pressed('modeSeg', $('modeSmooth')); $('modeHint').textContent = 'Removes shake, keeps your intentional pans.'; };
-  $('modeLock').onclick = () => { cam.setMode('lock'); pressed('modeSeg', $('modeLock')); $('modeHint').textContent = 'Holds the framing like a stand, including size when you move forward or back.'; };
-  $('crop').oninput = (e) => { const v = +e.target.value / 100; cam.setCrop(v); $('cropVal').textContent = e.target.value + '%'; };
-  $('toggle').onclick = () => { cam.setEnabled(!cam.enabled); $('toggle').setAttribute('aria-pressed', cam.enabled); $('toggle').textContent = cam.enabled ? 'Stab on' : 'Stab off'; $('stabLabel').textContent = cam.enabled ? 'STAB ON' : 'STAB OFF'; };
-  $('rec').onclick = () => recorder ? stopRec() : startRec();
+  $('flip').onclick = () => { S.facing = S.facing === 'environment' ? 'user' : 'environment'; useCamera(); };
+  $('torch').onclick = () => { if (!S.track) return; S.torch = !S.torch; S.track.applyConstraints({ advanced: [{ torch: S.torch }] }).catch(() => {}); $('torch').setAttribute('aria-pressed', S.torch); };
+  $('modeSmooth').onclick = () => setMode('smooth');
+  $('modeLock').onclick = () => setMode('lock');
+  $('modeTarget').onclick = () => { setMode('target'); $('tip').textContent = 'Tap the subject you want to keep fixed on screen.'; };
+  $('unlock').onclick = () => { cam.unlock(); $('tip').textContent = 'Unlocked. Tap a subject to lock again.'; };
+  $('zoom').oninput = (e) => setZoom(+e.target.value);
+  $('crop').oninput = (e) => { cam.setCrop(+e.target.value / 100); $('cropVal').textContent = e.target.value + '%'; };
+  $('stabOn').onchange = (e) => { cam.setEnabled(e.target.checked); $('stabLabel').textContent = e.target.checked ? $('stabLabel').textContent.replace(' OFF', '') : 'STAB OFF'; };
+  for (const b of $('qSeg').querySelectorAll('button')) b.onclick = () => { if (S.rec) return; S.quality = +b.dataset.q; pressed('qSeg', b); cam.setOutput(S.quality); if (S.stream) useCamera(); };
+  for (const b of $('fpsSeg').querySelectorAll('button')) b.onclick = () => { if (S.rec) return; S.fps = +b.dataset.f; pressed('fpsSeg', b); if (S.stream) useCamera(); };
+  $('rec').onclick = () => S.rec ? stopRec() : startRec();
+  $('saveAgain').onclick = async () => { if (S.lastClip) $('recStatus').textContent = await saveBlob(S.lastClip.blob, S.lastClip.name); };
+  $('share').onclick = async () => {
+    if (!S.lastClip) return;
+    try { await navigator.share({ files: [new File([S.lastClip.blob], S.lastClip.name, { type: S.lastClip.blob.type })] }); $('recStatus').textContent = 'Shared. Choose Save Video to put it in Photos.'; }
+    catch (e) { if (e.name !== 'AbortError') $('recStatus').textContent = 'Sharing is not available here. Use Save clip.'; }
+  };
   $('getApp').onclick = async () => {
-    const html = '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body>' + document.body.innerHTML + '</body></html>';
+    const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body>' + document.body.innerHTML + '</body></html>';
     $('recStatus').textContent = await saveBlob(new Blob([html], { type: 'text/html' }), 'steadycam.html');
   };
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && (S.rec || S.stream)) keepAwake(true); });
 
   useDemo();
   cam.start();
